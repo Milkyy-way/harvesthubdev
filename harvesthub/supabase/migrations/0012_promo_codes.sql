@@ -56,7 +56,10 @@ create policy "active promo codes are viewable by everyone"
 -- Safe no-op if those farmer rows don't exist.
 
 insert into promo_codes (id, farmer_id, code, discount_type, discount_value, min_order_amount)
-values
-  ('44444444-4444-4444-4444-444444444001', '11111111-1111-1111-1111-111111111101', 'WELCOME10', 'percentage', 10, null),
+select v.id::uuid, v.farmer_id::uuid, v.code, v.discount_type, v.discount_value, v.min_order_amount
+from (values
+  ('44444444-4444-4444-4444-444444444001', '11111111-1111-1111-1111-111111111101', 'WELCOME10', 'percentage', 10.00, null::numeric),
   ('44444444-4444-4444-4444-444444444002', '11111111-1111-1111-1111-111111111103', 'DAIRY5', 'fixed', 5.00, 15.00)
+) as v (id, farmer_id, code, discount_type, discount_value, min_order_amount)
+where exists (select 1 from profiles p where p.id = v.farmer_id::uuid)
 on conflict (id) do nothing;

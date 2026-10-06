@@ -64,8 +64,13 @@ update farmer_profiles set
   bio = 'Small grass-fed dairy herd, milked and bottled on-site daily. No hormones, no antibiotics.'
 where id = '11111111-1111-1111-1111-111111111103';
 
+-- (The farmer must exist for the insert to be a no-op without 0010; a
+-- plain VALUES insert would fail the farmer_id foreign key instead.)
 insert into farmer_certifications (id, farmer_id, cert_type, cert_name)
-values
+select v.id::uuid, v.farmer_id::uuid, v.cert_type, v.cert_name
+from (values
   ('33333333-3333-3333-3333-333333333001', '11111111-1111-1111-1111-111111111101', 'organic', 'USDA Certified Organic'),
   ('33333333-3333-3333-3333-333333333002', '11111111-1111-1111-1111-111111111103', 'state_ag_registration', 'State Dairy License')
+) as v (id, farmer_id, cert_type, cert_name)
+where exists (select 1 from profiles p where p.id = v.farmer_id::uuid)
 on conflict (id) do nothing;

@@ -41,3 +41,6 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Google Play upload key for `eas submit` (secret)
+google-play-service-account.json

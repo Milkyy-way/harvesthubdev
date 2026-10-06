@@ -26,13 +26,16 @@ export default function SettingsScreen() {
           caption="Name, phone, address, preferences"
           onPress={() => router.push('/(customer)/edit-profile')}
         />
-        <SettingsRow
-          icon="card-giftcard"
-          label="Referral Link"
-          caption="Invite friends to HarvestHub"
-          onPress={() => router.push('/(customer)/referral')}
-        />
+        {/* Referral (/(customer)/referral) stays hidden until it does
+            something — today it's a "coming soon" placeholder. */}
         <SettingsRow icon="gavel" label="Legal" caption="Terms of Service, Privacy Policy" onPress={() => router.push('/(customer)/legal')} />
+        <SettingsRow
+          icon="person-remove"
+          label="Delete account"
+          caption="Permanently delete your account and data"
+          onPress={() => router.push('/(customer)/delete-account')}
+          destructive
+        />
       </ScrollView>
     </View>
   );

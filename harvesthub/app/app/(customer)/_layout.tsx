@@ -14,6 +14,7 @@ export default function CustomerLayout() {
         <Stack.Screen name="settings" />
         <Stack.Screen name="help" />
         <Stack.Screen name="legal" />
+        <Stack.Screen name="delete-account" />
         <Stack.Screen name="referral" />
       </Stack>
     </CheckoutDraftProvider>

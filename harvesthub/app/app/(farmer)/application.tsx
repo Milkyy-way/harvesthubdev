@@ -488,6 +488,12 @@ export default function FarmerApplication() {
             </Pressable>
           </>
         )}
+
+        {!isResubmission ? (
+          <Pressable style={styles.backLink} onPress={() => router.push('/(farmer)/delete-account')} disabled={saving}>
+            <Text style={styles.deleteLinkText}>Changed your mind? Delete your account</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -591,4 +597,5 @@ const styles = StyleSheet.create({
   buttonText: { color: colors.white, fontWeight: '700', fontSize: 15 },
   backLink: { alignItems: 'center', paddingVertical: spacing.md },
   backLinkText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  deleteLinkText: { color: colors.textMuted, fontSize: 13 },
 });

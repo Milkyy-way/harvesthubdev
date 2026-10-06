@@ -4,6 +4,7 @@ import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AntDesign from '@expo/vector-icons/AntDesign';
+import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/googleAuth';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
@@ -30,7 +31,21 @@ export default function SignupDetails() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+
+  // With "Confirm email" off in Supabase, signUp signs the user straight in
+  // and the route guard takes over. With it on, there is no session until
+  // they enter the emailed code (app/(auth)/verify-email.tsx). An email that
+  // already has an account comes back with no identities (Supabase hides
+  // that it exists) — say so here instead of waiting for a code that never
+  // comes.
+  const afterSignUp = (data: { session: Session | null; user: User | null }, email: string) => {
+    if (data.session) return;
+    if (data.user?.identities?.length === 0) {
+      setError('An account with this email is already registered.');
+      return;
+    }
+    router.replace({ pathname: '/(auth)/verify-email', params: { email, sent: '1' } });
+  };
 
   const updateCustomer = (patch: Partial<CustomerFormValues>) => setCustomerValues((prev) => ({ ...prev, ...patch }));
   const updateFarmer = (patch: Partial<FarmerAccountFormValues>) => setFarmerValues((prev) => ({ ...prev, ...patch }));
@@ -103,10 +118,7 @@ export default function SignupDetails() {
         setError(signUpError.message);
         return;
       }
-      // With email confirmation off, signUp signs them straight in and the
-      // root layout's route guard takes over — only show "check your email"
-      // when there's no session yet.
-      if (!signUpData.session) setSubmitted(true);
+      afterSignUp(signUpData, result.data.email.toLowerCase());
       return;
     }
 
@@ -139,24 +151,8 @@ export default function SignupDetails() {
       setError(signUpError.message);
       return;
     }
-    if (!signUpData.session) setSubmitted(true);
+    afterSignUp(signUpData, result.data.email.toLowerCase());
   };
-
-  if (submitted) {
-    const email = role === 'customer' ? customerValues.email : farmerValues.email;
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Check your email</Text>
-        <Text style={styles.subtitle}>
-          We sent a confirmation link to {email.trim()}. Confirm it, then come back and log in
-          {role === 'farmer' ? ' to finish your farm application.' : '.'}
-        </Text>
-        <Link href="/(auth)/login" style={styles.link}>
-          <Text style={styles.linkText}>Back to log in</Text>
-        </Link>
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>

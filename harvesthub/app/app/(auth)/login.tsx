@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AntDesign from '@expo/vector-icons/AntDesign';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle, isFirstEverSignIn } from '../../lib/googleAuth';
+import { resendSignupCode } from '../../lib/emailVerification';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { Logo } from '../../components/Logo';
 
@@ -25,10 +26,15 @@ export default function Login() {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
+    const normalizedEmail = email.trim().toLowerCase();
+    const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+    if (error?.code === 'email_not_confirmed') {
+      // Signed up but never entered the emailed code — send a fresh one.
+      const { error: resendError } = await resendSignupCode(normalizedEmail);
+      setLoading(false);
+      router.push({ pathname: '/(auth)/verify-email', params: { email: normalizedEmail, sent: resendError ? '0' : '1' } });
+      return;
+    }
     setLoading(false);
     if (error) {
       // Supabase intentionally returns the same generic message for a wrong

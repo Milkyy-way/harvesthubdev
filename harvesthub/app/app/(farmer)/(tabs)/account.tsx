@@ -112,6 +112,17 @@ export default function FarmerAccount() {
           <InfoRow icon="phone" label="Phone" value={profile?.phone ?? 'Not set'} />
         </Section>
 
+        <Section title="More">
+          <SettingsRow icon="gavel" label="Legal" caption="Terms of Service, Privacy Policy" onPress={() => router.push('/(farmer)/legal')} />
+          <SettingsRow
+            icon="person-remove"
+            label="Delete account"
+            caption="Permanently delete your account and data"
+            onPress={() => router.push('/(farmer)/delete-account')}
+            destructive
+          />
+        </Section>
+
         <Pressable style={styles.logoutButton} onPress={() => supabase.auth.signOut()}>
           <MaterialIcons name="logout" size={16} color={colors.danger} />
           <Text style={styles.logoutText}>Log out</Text>
@@ -146,9 +157,9 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1,
     borderColor: colors.danger,
-    borderRadius: radius.md,
+    borderRadius: radius.pill,
     paddingVertical: 12,
-    marginTop: spacing.sm,
+    marginTop: spacing.xl,
   },
   logoutText: { color: colors.danger, fontSize: 14, fontWeight: '700' },
 });

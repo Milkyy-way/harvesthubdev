@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.account.router import router as account_router
 from app.customers.router import router as customers_router
 from app.categories.router import router as categories_router
 from app.farmers.router import router as farmers_router
@@ -12,16 +14,27 @@ from app.farmer_products.router import router as farmer_products_router
 from app.farmer_orders.router import router as farmer_orders_router
 from app.farmer_earnings.router import router as farmer_earnings_router
 from app.farmer_ratings.router import router as farmer_ratings_router
+from app.legal.router import router as legal_router
 
-app = FastAPI(title="HarvestHub API")
+# The interactive docs list every endpoint — handy in development, not
+# something to publish in production.
+_docs_enabled = settings.ENVIRONMENT != "production"
+
+app = FastAPI(
+    title="HarvestHub API",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(account_router, prefix="/api/v1")
 app.include_router(customers_router, prefix="/api/v1")
 app.include_router(categories_router, prefix="/api/v1")
 app.include_router(farmers_router, prefix="/api/v1")
@@ -34,6 +47,7 @@ app.include_router(farmer_products_router, prefix="/api/v1")
 app.include_router(farmer_orders_router, prefix="/api/v1")
 app.include_router(farmer_earnings_router, prefix="/api/v1")
 app.include_router(farmer_ratings_router, prefix="/api/v1")
+app.include_router(legal_router)
 
 @app.get("/health")
 def health():

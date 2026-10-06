@@ -45,8 +45,11 @@ export function resolveRedirect({ hasSession, profile, applicationSubmitted, seg
   if (profile.role === 'farmer') {
     const inFarmerApp = group === '(farmer)';
     const inApplication = inFarmerApp && segments[1] === 'application';
+    // Open before the application is sent in, too: every account must be
+    // deletable in-app (Google Play), and the legal pages it links to.
+    const inAccountPages = inFarmerApp && (segments[1] === 'delete-account' || segments[1] === 'legal');
 
-    if (!applicationSubmitted) return inApplication ? null : '/(farmer)/application';
+    if (!applicationSubmitted) return inApplication || inAccountPages ? null : '/(farmer)/application';
     if (inApplication) return profile.status === 'rejected' ? null : '/(farmer)/(tabs)';
     return inFarmerApp ? null : '/(farmer)/(tabs)';
   }
