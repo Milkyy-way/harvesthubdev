@@ -14,12 +14,15 @@ import { SettingsRow } from '../../../components/customer/SettingsRow';
 import { Section } from '../../../components/Section';
 import { InfoRow, ChipRow } from '../../../components/InfoRow';
 import type { DashboardSummary } from '../../../types/dashboard';
+import type { MembershipOverview } from '../../../types/membership';
+import { formatLongDate } from '../../../lib/harvestPass';
 
 export default function CustomerAccount() {
   const { session, profile, customerProfile } = useAuth();
   const router = useRouter();
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [pass, setPass] = useState<MembershipOverview | null>(null);
   const firstName = profile?.full_name?.trim().split(' ')[0];
 
   useFocusEffect(
@@ -27,6 +30,10 @@ export default function CustomerAccount() {
       apiClient.get<DashboardSummary>('/customers/me/dashboard-summary').then(
         (res) => setSummary(res.data),
         (err) => console.warn('Could not load account stats:', err)
+      );
+      apiClient.get<MembershipOverview>('/membership').then(
+        (res) => setPass(res.data),
+        (err) => console.warn('Could not load Harvest Pass status:', err)
       );
     }, [])
   );
@@ -62,6 +69,18 @@ export default function CustomerAccount() {
           <StatTile icon="cancel" label="Cancelled" value={summary ? String(summary.orders_cancelled) : '—'} />
         </View>
 
+        <SettingsRow
+          icon="workspace-premium"
+          label="Harvest Pass"
+          caption={harvestPassCaption(pass)}
+          onPress={() => router.push('/(customer)/harvest-pass')}
+        />
+        <SettingsRow
+          icon="card-giftcard"
+          label="Refer a friend"
+          caption="Give a month, get a month"
+          onPress={() => router.push('/(customer)/referral')}
+        />
         <SettingsRow icon="help-outline" label="Help" onPress={() => router.push('/(customer)/help')} />
         <SettingsRow icon="settings" label="Settings" onPress={() => router.push('/(customer)/settings')} />
 
@@ -93,6 +112,20 @@ export default function CustomerAccount() {
       </View>
     </ScrollView>
   );
+}
+
+function harvestPassCaption(pass: MembershipOverview | null): string | undefined {
+  if (!pass) return undefined;
+  const m = pass.membership;
+  if (!m) {
+    return pass.trial_days > 0
+      ? `Try it free for ${pass.trial_days} days — no service fee on $${pass.free_service_fee_min_subtotal.toFixed(0)}+ orders`
+      : `No service fee on orders of $${pass.free_service_fee_min_subtotal.toFixed(0)}+`;
+  }
+  if (!m.has_benefits || m.status === 'past_due') return 'Payment problem — tap to update your card';
+  if (m.cancel_at_period_end && m.ends_at) return `Ends ${formatLongDate(m.ends_at)}`;
+  if (m.status === 'trialing' && m.trial_end) return `Free trial until ${formatLongDate(m.trial_end)}`;
+  return `Member · $${pass.total_savings.toFixed(2)} saved`;
 }
 
 const styles = StyleSheet.create({

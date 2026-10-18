@@ -40,6 +40,7 @@ export interface StoreOrder {
   promo_discount: number;
   delivery_fee: number;
   service_fee: number;
+  member_savings: number; // Harvest Pass — the waived service fee
   tax: number;
   total: number;
   refunded_amount: number;

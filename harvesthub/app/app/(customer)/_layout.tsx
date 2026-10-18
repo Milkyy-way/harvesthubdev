@@ -16,6 +16,7 @@ export default function CustomerLayout() {
         <Stack.Screen name="legal" />
         <Stack.Screen name="delete-account" />
         <Stack.Screen name="referral" />
+        <Stack.Screen name="harvest-pass" />
       </Stack>
     </CheckoutDraftProvider>
   );

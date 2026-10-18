@@ -40,6 +40,8 @@ class StoreOrder(Base):
     service_fee = Column(Numeric(10, 2), nullable=False, default=0)
     tax = Column(Numeric(10, 2), nullable=False, default=0)
     total = Column(Numeric(10, 2), nullable=False)
+    # What Harvest Pass took off this farm's order (the waived service fee) — see 0028.
+    member_savings = Column(Numeric(10, 2), nullable=False, default=0)
 
     status = Column(String, nullable=False, default="pending_payment")  # + 'ready_for_pickup' — see 0025
     # When the farmer may see this order and the customer's name/phone:

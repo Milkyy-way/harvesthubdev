@@ -44,6 +44,7 @@ class CheckoutGroupOut(BaseModel):
     promo_error: Optional[str]
     delivery_fee: float
     service_fee: float
+    member_savings: float  # service fee Harvest Pass waived for this farm
     tax: float
     farm_total: float
 
@@ -51,3 +52,10 @@ class CheckoutGroupOut(BaseModel):
 class CheckoutPreviewResponse(BaseModel):
     groups: list[CheckoutGroupOut]
     grand_total: float
+    is_member: bool
+    member_savings: float
+    # Non-members only: what Harvest Pass would save on this checkout (0
+    # below the minimum) — drives the checkout upsell.
+    member_potential_savings: float
+    member_min_subtotal: float
+    items_subtotal: float

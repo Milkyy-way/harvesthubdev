@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStripe } from '@stripe/stripe-react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -75,6 +76,24 @@ export default function CheckoutScreen() {
     loadPreview({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Joining Harvest Pass from the checkout upsell changes the fees — reprice
+  // when the customer comes back (keeping any promo codes they applied).
+  const appliedPromoCodesRef = useRef(appliedPromoCodes);
+  appliedPromoCodesRef.current = appliedPromoCodes;
+  const repriceOnFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (repriceOnFocus.current) {
+        repriceOnFocus.current = false;
+        loadPreview(appliedPromoCodesRef.current);
+      }
+    }, [loadPreview])
+  );
+  const openHarvestPass = () => {
+    repriceOnFocus.current = true;
+    router.push('/(customer)/harvest-pass');
+  };
 
   const handleApplyPromo = (farmerId: string) => {
     const code = (promoInputs[farmerId] ?? '').trim();
@@ -184,6 +203,8 @@ export default function CheckoutScreen() {
           ))
         )}
 
+        {preview && preview.groups.length > 0 ? <HarvestPassNote preview={preview} onPress={openHarvestPass} /> : null}
+
         {preview && preview.groups.length > 0 ? (
           <View style={styles.paymentSection}>
             <Text style={styles.paymentTitle}>Payment method</Text>
@@ -257,6 +278,47 @@ function ContactSharingNotice({ farmNames, paymentMethod }: { farmNames: string[
   );
 }
 
+// Members: what Harvest Pass saved here, or how much more to add to get the
+// free service fee. Non-members: what Harvest Pass would save on this order.
+function HarvestPassNote({ preview, onPress }: { preview: CheckoutPreviewResponse; onPress: () => void }) {
+  const min = preview.member_min_subtotal;
+  if (preview.is_member) {
+    if (preview.member_savings > 0) {
+      return (
+        <View style={styles.passNote}>
+          <Text style={styles.passEmoji}>🌾</Text>
+          <Text style={styles.passText}>
+            <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on this order. You&apos;re saving $
+            {preview.member_savings.toFixed(2)}.
+          </Text>
+        </View>
+      );
+    }
+    const short = Math.max(min - preview.items_subtotal, 0);
+    if (short <= 0) return null;
+    return (
+      <View style={styles.passNote}>
+        <Text style={styles.passEmoji}>🌾</Text>
+        <Text style={styles.passText}>
+          Add <Text style={styles.passBold}>${short.toFixed(2)}</Text> more to skip the service fee with Harvest Pass (orders of $
+          {min.toFixed(0)}+).
+        </Text>
+      </View>
+    );
+  }
+  if (preview.member_potential_savings <= 0) return null;
+  return (
+    <Pressable style={({ pressed }) => [styles.passNote, styles.passNoteUpsell, pressed && styles.passPressed]} onPress={onPress}>
+      <Text style={styles.passEmoji}>🌾</Text>
+      <Text style={styles.passText}>
+        Save <Text style={styles.passBold}>${preview.member_potential_savings.toFixed(2)}</Text> on this order with{' '}
+        <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on orders of ${min.toFixed(0)}+. Try it free.
+      </Text>
+      <MaterialIcons name="chevron-right" size={20} color={colors.primaryDark} />
+    </Pressable>
+  );
+}
+
 function PaymentOption({
   icon,
   label,
@@ -296,6 +358,21 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   errorText: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
   paymentSection: { marginHorizontal: spacing.lg, marginTop: spacing.lg },
+  passNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.tint,
+  },
+  passNoteUpsell: { backgroundColor: `${colors.accent}2E` },
+  passPressed: { opacity: 0.8 },
+  passEmoji: { fontSize: 22 },
+  passText: { flex: 1, fontSize: 13, lineHeight: 18, color: colors.text },
+  passBold: { fontWeight: '700', color: colors.primaryDark },
   paymentTitle: { fontFamily: fonts.headline, fontSize: 19, color: colors.text, marginBottom: spacing.sm },
   paymentOption: {
     flexDirection: 'row',

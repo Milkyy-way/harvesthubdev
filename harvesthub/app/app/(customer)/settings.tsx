@@ -26,8 +26,12 @@ export default function SettingsScreen() {
           caption="Name, phone, address, preferences"
           onPress={() => router.push('/(customer)/edit-profile')}
         />
-        {/* Referral (/(customer)/referral) stays hidden until it does
-            something — today it's a "coming soon" placeholder. */}
+        <SettingsRow
+          icon="card-giftcard"
+          label="Refer a friend"
+          caption="Give a month of Harvest Pass, get a month"
+          onPress={() => router.push('/(customer)/referral')}
+        />
         <SettingsRow icon="gavel" label="Legal" caption="Terms of Service, Privacy Policy" onPress={() => router.push('/(customer)/legal')} />
         <SettingsRow
           icon="person-remove"

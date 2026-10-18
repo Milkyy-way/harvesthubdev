@@ -55,6 +55,7 @@ class StoreOrderOut(BaseModel):
     promo_discount: float
     delivery_fee: float
     service_fee: float
+    member_savings: float  # Harvest Pass — the waived service fee
     tax: float
     total: float
     refunded_amount: float

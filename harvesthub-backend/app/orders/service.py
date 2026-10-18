@@ -116,6 +116,7 @@ def build_order_out(db: Session, order_id) -> dict:
                 "promo_discount": float(so.promo_discount),
                 "delivery_fee": float(so.delivery_fee),
                 "service_fee": float(so.service_fee),
+                "member_savings": float(so.member_savings or 0),
                 "tax": float(so.tax),
                 "total": float(so.total),
                 "refunded_amount": float(refunded or 0),
@@ -263,6 +264,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             promo_discount=group["promo_discount"],
             delivery_fee=group["delivery_fee"],
             service_fee=group["service_fee"],
+            member_savings=group["member_savings"],
             tax=group["tax"],
             total=group["farm_total"],
             status="pending_payment",
@@ -801,7 +803,8 @@ def get_dashboard_summary(db: Session, customer_id: str, range_key: str | None =
     kept_store_orders = [so for so in all_kept_store_orders if so.order_id in order_ids_in_range]
 
     spending_total = round(sum(float(so.total) for so in kept_store_orders), 2)
-    savings_total = round(sum(float(so.promo_discount) for so in kept_store_orders), 2)
+    # Promo codes plus what Harvest Pass took off (the waived service fee).
+    savings_total = round(sum(float(so.promo_discount) + float(so.member_savings or 0) for so in kept_store_orders), 2)
 
     orders_with_spend = {so.order_id for so in kept_store_orders}
     average_order_value = round(spending_total / len(orders_with_spend), 2) if orders_with_spend else 0.0

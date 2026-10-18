@@ -9,6 +9,7 @@ import { apiClient } from '../../../lib/apiClient';
 import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { Header } from '../../../components/customer/Header';
 import { SavingsTicker } from '../../../components/customer/SavingsTicker';
+import { HarvestPassBanner } from '../../../components/customer/HarvestPassBanner';
 import { FarmerSpotlightRail } from '../../../components/customer/FarmerSpotlightRail';
 import { HarvestPicksRail } from '../../../components/customer/HarvestPicksRail';
 import { CategoryRail } from '../../../components/customer/CategoryRail';
@@ -22,6 +23,7 @@ import type {
   HarvestPicksResponse,
 } from '../../../types/database';
 import type { DashboardSummary } from '../../../types/dashboard';
+import type { MembershipOverview } from '../../../types/membership';
 
 const PAGE_SIZE = 20;
 
@@ -45,6 +47,7 @@ export default function CustomerHome() {
   const [spotlight, setSpotlight] = useState<FarmerSpotlightResponse['items']>([]);
   const [harvestPicks, setHarvestPicks] = useState<HarvestPicksResponse['items']>([]);
   const [savingsAmount, setSavingsAmount] = useState<number | null>(null);
+  const [membership, setMembership] = useState<MembershipOverview | null>(null);
 
   const avatarInitial = (profile?.full_name?.trim()?.[0] ?? 'H').toUpperCase();
 
@@ -85,6 +88,11 @@ export default function CustomerHome() {
       apiClient.get<CartSummary>('/cart').then(
         (res) => setCartItemCount(res.data.item_count),
         (err) => console.warn('Could not load cart count:', err)
+      );
+      // Also on focus: joining Harvest Pass elsewhere should hide the banner.
+      apiClient.get<MembershipOverview>('/membership').then(
+        (res) => setMembership(res.data),
+        (err) => console.warn('Could not load Harvest Pass status:', err)
       );
     }, [])
   );
@@ -200,6 +208,9 @@ export default function CustomerHome() {
             {!filtering ? (
               <>
                 {savingsAmount != null && savingsAmount > 0 ? <SavingsTicker amount={savingsAmount} /> : null}
+                {membership && !membership.membership ? (
+                  <HarvestPassBanner trialDays={membership.trial_days} minSubtotal={membership.free_service_fee_min_subtotal} />
+                ) : null}
                 <FarmerSpotlightRail items={spotlight} onPressFarmer={openFarm} />
                 <HarvestPicksRail items={harvestPicks} />
               </>

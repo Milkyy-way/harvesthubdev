@@ -100,7 +100,11 @@ export function OrderStoreSection({ storeOrder, paysAtPickup, busy, onCancel, on
           <BreakdownLine label={`Promo (${storeOrder.promo_code})`} value={-storeOrder.promo_discount} highlight />
         ) : null}
         {storeOrder.fulfillment_method === 'delivery' ? <BreakdownLine label="Delivery fee" value={storeOrder.delivery_fee} /> : null}
-        <BreakdownLine label="Service fee" value={storeOrder.service_fee} />
+        {storeOrder.member_savings > 0 ? (
+          <BreakdownLine label="Service fee · free with Harvest Pass" value={0} member />
+        ) : (
+          <BreakdownLine label="Service fee" value={storeOrder.service_fee} />
+        )}
         <BreakdownLine label="Tax" value={storeOrder.tax} />
         <View style={styles.divider} />
         <BreakdownLine label="Total" value={storeOrder.total} bold />
@@ -152,12 +156,31 @@ export function OrderStoreSection({ storeOrder, paysAtPickup, busy, onCancel, on
   );
 }
 
-function BreakdownLine({ label, value, bold, highlight }: { label: string; value: number; bold?: boolean; highlight?: boolean }) {
+function BreakdownLine({
+  label,
+  value,
+  bold,
+  highlight,
+  member,
+}: {
+  label: string;
+  value: number;
+  bold?: boolean;
+  highlight?: boolean;
+  member?: boolean;
+}) {
   const sign = value < 0 ? '-' : '';
   return (
     <View style={styles.breakdownRow}>
-      <Text style={[styles.breakdownLabel, bold && styles.breakdownLabelBold]}>{label}</Text>
-      <Text style={[styles.breakdownValue, bold && styles.breakdownValueBold, highlight && styles.breakdownValueHighlight]}>
+      <Text style={[styles.breakdownLabel, bold && styles.breakdownLabelBold, member && styles.breakdownMember]}>{label}</Text>
+      <Text
+        style={[
+          styles.breakdownValue,
+          bold && styles.breakdownValueBold,
+          highlight && styles.breakdownValueHighlight,
+          member && styles.breakdownMember,
+        ]}
+      >
         {sign}${Math.abs(value).toFixed(2)}
       </Text>
     </View>
@@ -190,6 +213,7 @@ const styles = StyleSheet.create({
   breakdownValue: { fontSize: 13, color: colors.text },
   breakdownValueBold: { fontSize: 15, fontWeight: '700', color: colors.text },
   breakdownValueHighlight: { color: colors.danger },
+  breakdownMember: { color: colors.primary, fontWeight: '700' },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.xs },
   ratingRow: {
     flexDirection: 'row',

@@ -75,7 +75,12 @@ export default function DeleteAccountScreen() {
         'Your verification documents and certifications',
         'Your products, product photos, and promo codes',
       ]
-    : ['Your login, name, and phone number', 'Your address and preferences', 'Your cart and the comments on your ratings'];
+    : [
+        'Your login, name, and phone number',
+        'Your address and preferences',
+        'Your cart and the comments on your ratings',
+        'Your Harvest Pass and saved cards — it ends right away, with no further charges, and any referral credit is lost',
+      ];
   const kept = isFarmer
     ? 'Records of your past orders and payouts (amounts and dates, without your name or contact details), because tax and accounting laws require them.'
     : 'Records of your past orders and payments (amounts, dates, and items, without your name, phone, or address), because tax and accounting laws require them.';

@@ -54,6 +54,7 @@ export interface CheckoutGroup {
   promo_error: string | null;
   delivery_fee: number;
   service_fee: number;
+  member_savings: number; // service fee Harvest Pass waived for this farm
   tax: number;
   farm_total: number;
 }
@@ -61,4 +62,11 @@ export interface CheckoutGroup {
 export interface CheckoutPreviewResponse {
   groups: CheckoutGroup[];
   grand_total: number;
+  is_member: boolean;
+  member_savings: number;
+  // Non-members only: what Harvest Pass would save on this checkout (0 below
+  // the minimum) — drives the checkout upsell.
+  member_potential_savings: number;
+  member_min_subtotal: number;
+  items_subtotal: number;
 }
