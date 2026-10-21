@@ -2,15 +2,18 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
+import { formatLongDate } from '../../lib/harvestPass';
 
 type Props = {
-  trialDays: number; // 0 for a returning member — no trial to offer
+  freeUntil: string | null; // still in their free month: when it ends
   minSubtotal: number;
 };
 
-// Home's Harvest Pass invite for non-members — same warm tinted strip as
-// SavingsTicker, so it reads as part of the page, not an ad.
-export function HarvestPassBanner({ trialDays, minSubtotal }: Props) {
+// Home's Harvest Pass strip for customers without a paid plan — during their
+// free month it says how long it lasts, after that it invites them to join.
+// Same warm tinted strip as SavingsTicker, so it reads as part of the page,
+// not an ad.
+export function HarvestPassBanner({ freeUntil, minSubtotal }: Props) {
   const router = useRouter();
 
   return (
@@ -21,10 +24,14 @@ export function HarvestPassBanner({ trialDays, minSubtotal }: Props) {
       <Text style={styles.emoji}>🌾</Text>
       <View style={styles.textWrap}>
         <Text style={styles.title}>Harvest Pass</Text>
-        <Text style={styles.label}>No service fee on orders of ${minSubtotal.toFixed(0)}+</Text>
+        <Text style={styles.label}>
+          {freeUntil
+            ? `Free until ${formatLongDate(freeUntil)} · no service fee on $${minSubtotal.toFixed(0)}+`
+            : `No service fee on orders of $${minSubtotal.toFixed(0)}+`}
+        </Text>
       </View>
       <View style={styles.cta}>
-        <Text style={styles.ctaText}>{trialDays > 0 ? 'Try free' : 'Join'}</Text>
+        <Text style={styles.ctaText}>{freeUntil ? 'Details' : 'Join'}</Text>
         <MaterialIcons name="chevron-right" size={16} color={colors.primaryDark} />
       </View>
     </Pressable>

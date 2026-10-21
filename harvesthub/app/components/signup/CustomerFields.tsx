@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { TextField } from '../TextField';
+import { AddressSearchField } from '../AddressSearchField';
 import { TagSelector } from '../TagSelector';
 import { colors, spacing } from '../../constants/theme';
 import {
@@ -91,10 +92,12 @@ export function CustomerFields({ value, onChange, errors }: Props) {
       />
 
       <Text style={styles.sectionTitle}>Delivery / pickup address</Text>
-      <TextField
-        placeholder="Street address"
+      <AddressSearchField
         value={value.addressStreet}
         onChangeText={(addressStreet) => onChange({ addressStreet })}
+        onSelectAddress={(a) =>
+          onChange({ addressStreet: a.street, addressCity: a.city, addressState: a.state, addressZip: a.zip })
+        }
         error={errors.addressStreet}
       />
       <TextField

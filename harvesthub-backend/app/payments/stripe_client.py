@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import stripe
 from app.core.config import settings
 
@@ -120,14 +122,14 @@ def create_subscription(
     customer_id: str,
     price_id: str,
     payment_method_id: str,
-    trial_days: int,
+    trial_end: datetime | None,
     metadata: dict,
     idempotency_key: str,
 ) -> dict:
-    """With a trial, nothing is charged now. Without one, the first invoice
-    is charged right away to the saved card; error_if_incomplete makes a
-    declined card raise a CardError instead of leaving an unpaid
-    subscription behind."""
+    """With trial_end (the end of the customer's free period), nothing is
+    charged until then. Without it, the first invoice is charged right away
+    to the saved card; error_if_incomplete makes a declined card raise a
+    CardError instead of leaving an unpaid subscription behind."""
     params = {
         "customer": customer_id,
         "items": [{"price": price_id}],
@@ -136,8 +138,8 @@ def create_subscription(
         "metadata": metadata,
         "idempotency_key": idempotency_key,
     }
-    if trial_days > 0:
-        params["trial_period_days"] = trial_days
+    if trial_end is not None:
+        params["trial_end"] = int(trial_end.timestamp())
         params["trial_settings"] = {"end_behavior": {"missing_payment_method": "cancel"}}
     return stripe.Subscription.create(**params).to_dict()
 
@@ -167,16 +169,3 @@ def set_subscription_payment_method(subscription_id: str, payment_method_id: str
 
 def pay_invoice(invoice_id: str) -> None:
     stripe.Invoice.pay(invoice_id)
-
-
-def credit_customer_balance(customer_id: str, amount: float, description: str, idempotency_key: str) -> str:
-    """A negative balance transaction is a credit — Stripe applies it to the
-    customer's next invoice(s) automatically. Returns its id."""
-    txn = stripe.Customer.create_balance_transaction(
-        customer_id,
-        amount=-to_cents(amount),
-        currency="usd",
-        description=description,
-        idempotency_key=idempotency_key,
-    )
-    return txn.id

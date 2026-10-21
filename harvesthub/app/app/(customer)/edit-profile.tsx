@@ -8,6 +8,7 @@ import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { TextField } from '../../components/TextField';
+import { AddressSearchField } from '../../components/AddressSearchField';
 import { TagSelector } from '../../components/TagSelector';
 import { phoneSchema, zipSchema, flattenFieldErrors, DIETARY_PREFERENCE_OPTIONS, PRODUCE_INTEREST_OPTIONS } from '../../lib/validation/schemas';
 import type { DietaryPreference, ProduceInterest } from '../../types/database';
@@ -52,12 +53,6 @@ export default function EditProfileScreen() {
       return;
     }
 
-    const addressChanged =
-      addressStreet.trim() !== customerProfile?.address_street ||
-      addressCity.trim() !== customerProfile?.address_city ||
-      addressState.trim() !== customerProfile?.address_state ||
-      addressZip.trim() !== customerProfile?.address_zip;
-
     try {
       const { error: profileError } = await supabase
         .from('profiles')
@@ -74,11 +69,9 @@ export default function EditProfileScreen() {
           address_zip: addressZip.trim(),
           dietary_preferences: dietaryPreferences,
           produce_interests: produceInterests,
-          // Address changed — clear the cached geocode so the backend
-          // re-geocodes on the next /customers/me fetch (see
-          // app/customers/service.py's get_or_geocode_profile, which only
-          // ever (re)attempts geocoding when geocoded_at is null).
-          ...(addressChanged ? { latitude: null, longitude: null, geocoded_at: null } : {}),
+          // A changed address clears the stored map location by itself (a
+          // database trigger, 0031); the API geocodes the new one on the
+          // next /customers/me fetch, which refreshProfile() below makes.
         })
         .eq('id', userId);
       if (customerProfileError) throw customerProfileError;
@@ -103,7 +96,7 @@ export default function EditProfileScreen() {
         <View style={styles.back} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.sectionTitle}>Contact</Text>
         <TextField placeholder="Full name" value={fullName} onChangeText={setFullName} error={errors.fullName} />
         <TextField
@@ -116,7 +109,17 @@ export default function EditProfileScreen() {
         />
 
         <Text style={styles.sectionTitle}>Delivery Address</Text>
-        <TextField placeholder="Street address" value={addressStreet} onChangeText={setAddressStreet} error={errors.addressStreet} />
+        <AddressSearchField
+          value={addressStreet}
+          onChangeText={setAddressStreet}
+          onSelectAddress={(a) => {
+            setAddressStreet(a.street);
+            setAddressCity(a.city);
+            setAddressState(a.state);
+            setAddressZip(a.zip);
+          }}
+          error={errors.addressStreet}
+        />
         <TextField placeholder="City" value={addressCity} onChangeText={setAddressCity} error={errors.addressCity} />
         <View style={styles.row}>
           <View style={styles.flex1}>

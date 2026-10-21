@@ -209,7 +209,10 @@ export default function CustomerHome() {
               <>
                 {savingsAmount != null && savingsAmount > 0 ? <SavingsTicker amount={savingsAmount} /> : null}
                 {membership && !membership.membership ? (
-                  <HarvestPassBanner trialDays={membership.trial_days} minSubtotal={membership.free_service_fee_min_subtotal} />
+                  <HarvestPassBanner
+                    freeUntil={membership.free_period_active ? membership.free_period_ends_at : null}
+                    minSubtotal={membership.free_service_fee_min_subtotal}
+                  />
                 ) : null}
                 <FarmerSpotlightRail items={spotlight} onPressFarmer={openFarm} />
                 <HarvestPicksRail items={harvestPicks} />

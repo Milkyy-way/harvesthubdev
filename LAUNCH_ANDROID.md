@@ -25,7 +25,9 @@ Work top to bottom. Steps 1–2 take weeks of waiting, so start them first and d
 | Backend production settings: docs hidden, CORS configurable | `harvesthub-backend/app/main.py`, `.env.example` |
 | Backend container | `harvesthub-backend/Dockerfile` |
 | One command to set up a new database (skips the fake sample farms) | `harvesthub/supabase/apply-migrations.mjs` |
-| "Referral (coming soon)" row hidden for launch | `app/(customer)/settings.tsx` |
+| Harvest Pass free for every new customer's first 30 days; no referral rewards ("Invite friends" is a plain share) | `app/membership/`, `0029_harvest_pass_free_period.sql` |
+| **Push, email and text notifications** for orders, Harvest Pass, approvals and payouts, with a Notifications settings screen | `harvesthub-backend/app/notifications/`, `lib/pushNotifications.ts`, `0030_notifications.sql` |
+| Address suggestions while typing, precise geocoding, users can't write their own coordinates | `components/AddressSearchField.tsx`, `app/core/geocoding.py`, `0031_precise_locations.sql` |
 
 > ⚠️ **The privacy policy and terms are drafts** written to match what the app actually does. Have a lawyer review `harvesthub-backend/app/legal/pages/privacy.html` and `terms.html` before launch. Set `COMPANY_NAME` to your LLC's exact name once it exists.
 
@@ -55,7 +57,48 @@ Both the sign-up and password-reset codes (sent by Supabase) and the farmer appr
 
 - [ ] Create an account at resend.com, then **add the domain** `harvesthubmarket.com`.
 - [ ] Add the DNS records Resend shows you (SPF, DKIM, and ideally a DMARC record) at your domain registrar. Wait until Resend says **Verified**.
-- [ ] Create an **API key** (it starts with `re_`). You'll use it twice below.
+- [ ] Create an **API key** (it starts with `re_`). You'll use it twice below: for Supabase's SMTP, and as the backend's `RESEND_API_KEY` (order and account emails, step 5).
+- [ ] The free plan sends 3,000 emails a month but only **100 a day**. Move to Pro ($20/month) once you get close; Resend → Usage shows where you are.
+
+## 3b. Text messages (Telnyx)
+
+Texts are optional and opt-in: customers and farmers turn them on in Settings → Notifications. Until the keys below are set, the app simply doesn't offer texts.
+
+- [ ] Create an account at telnyx.com and complete account verification.
+- [ ] US carriers only deliver business texts from **registered** numbers. Either:
+  - **10DLC (a local number):** register a Brand (needs your **EIN**, about $4 one-time) and a Campaign ("Customer care / account notifications", about $15 vetting plus ~$2–10/month), then buy a local number (~$1/month) and attach it; or
+  - **Toll-free:** buy a toll-free number and submit Toll-Free Verification (free, but since 2026 it also requires your **EIN**).
+  Either way this waits on the LLC and EIN from step 1. Approval takes a few days.
+  - For the registration form: messages are order updates (ready for pickup, cancelled, new order for farms); users opt in by turning texts on in the app, which shows the number, "Message and data rates may apply" and "Reply STOP to stop"; every text ends with "Reply STOP to opt out". Point them to your privacy policy URL.
+- [ ] Create a **Messaging Profile** and keep its default **STOP/HELP handling on**: Telnyx then refuses to text anyone who replied STOP.
+- [ ] Create an **API key**. Backend variables (step 5): `TELNYX_API_KEY`, and `TELNYX_FROM_NUMBER` in `+1XXXXXXXXXX` form.
+- [ ] Cost: about $0.004 per text plus ~$0.003–0.005 carrier fee. At launch volume that's a few dollars a month on top of the fixed fees.
+
+## 3c. Address suggestions and geocoding (Google Maps)
+
+One key, used **only by the backend** — the app asks the backend for suggestions, so nothing goes into the app. Do this in the same Google Cloud project as Firebase and Google sign-in.
+
+- [ ] Google Cloud console → **Billing**: the project needs a billing account (a card), even though you'll stay inside the free amounts at launch. Add a **budget alert** (Billing → Budgets & alerts), e.g. $10.
+- [ ] **APIs & Services → Library:** enable **Places API (New)** and **Geocoding API**.
+- [ ] **APIs & Services → Credentials → Create credentials → API key.** Then edit the key:
+  - **API restrictions → Restrict key** → tick **Places API (New)** and **Geocoding API** only.
+  - Application restrictions: **None** (it lives on the server, never in the app).
+  - Name it e.g. "HarvestHub server".
+- [ ] Put it in the backend as `GOOGLE_MAPS_API_KEY` — your local `harvesthub-backend/.env` for development, and the host's environment for production (step 5). The same key can serve both.
+- [ ] Optional safety cap: **APIs & Services → Places API (New) → Quotas**, lower the per-day request limit (e.g. 2,000). The backend already limits each phone to 60 lookups a minute.
+- Free every month: 10,000 address lookups (Place Details), 10,000 geocodes, and the suggestions shown while typing are free when the user picks one. At launch size you won't pay anything.
+- Google's terms only allow keeping its coordinates for 30 days, so the backend re-geocodes every home and farm monthly by itself (the scheduled job, step 5). Nothing for you to do.
+- Without the key, address fields are plain text boxes and the backend falls back to the free Census/ZIP lookups (less exact).
+
+## 3d. Push notifications (Firebase + Expo)
+
+Android push goes through Firebase Cloud Messaging; Expo's push service (free) talks to it for us.
+
+- [ ] Firebase console (console.firebase.google.com) → **Add project**, using your existing Google Cloud project.
+- [ ] Add **two Android apps**: `com.harvesthubmarket.app` and `com.harvesthubmarket.app.dev`. Download **google-services.json** (it covers both) and put it at `harvesthub/app/google-services.json`. It isn't secret; commit it.
+- [ ] Project settings → **Service accounts** → **Generate new private key** (a JSON file — this one IS secret; keep it out of the repo).
+- [ ] Give it to Expo: `npx eas-cli credentials -p android` → production → **Google Service Account** → **Manage your Google Service Account Key for Push Notifications (FCM V1)** → upload the JSON. Repeat for the development profile.
+- [ ] iOS later: EAS sets up the Apple push key for you on the first iOS build (needs the Apple Developer account).
 
 ## 4. Supabase production project
 
@@ -71,12 +114,12 @@ Create a **new** project for production, separate from the one you develop on, s
   ```
   - Get the connection string from Project Settings → Database → Connection string → **Session pooler**, with your password filled in.
   - The script uses `psql` from your PostgreSQL install, applies all migrations in order, and **skips the sample farms**. It's safe to run again.
-- [ ] Also bring your **development** project up to date (it needs the new `0027`):
+- [ ] Also bring your **development** project up to date (it needs the new `0029`–`0031`):
   ```
-  node supabase/apply-migrations.mjs "<dev connection string>" --from 0027
+  node supabase/apply-migrations.mjs "<dev connection string>" --from 0029
   ```
-  If you never applied 0020–0026 there, use `--from 0020`.
-- [ ] Check the extensions (Database → Extensions): **pg_cron** should be on (the migration turns it on). Turn on **pg_net**; the farmer emails need it.
+  If you never applied 0027–0028 there, use `--from 0027` (or `--from 0020` if 0020–0026 are missing too).
+- [ ] Check the extensions (Database → Extensions): **pg_cron** should be on (the migration turns it on). pg_net isn't needed any more (farmer emails now come from the backend).
 
 ### Authentication settings (production project)
 
@@ -121,13 +164,9 @@ Create a **new** project for production, separate from the one you develop on, s
   - Then **Publish app** (move it from "Testing" to "In production"). While it's in Testing, only listed test users can sign in.
   - Only the basic email/profile scopes are used, so no Google review is needed. Uploading a logo there does start a brand review.
 
-### Farmer approval and rejection emails (production project, SQL editor)
+### Farmer approval and rejection emails
 
-```sql
-select vault.create_secret('re_YOUR_RESEND_KEY', 'resend_api_key');
-update app_config set value = 'true' where key = 'farmer_review_emails_enabled';
-```
-Leave them **off** in the development project, as agreed.
+Nothing to do: the backend now sends these (email and push) through its scheduled job, step 5. **Leave the old database switch off** (`app_config.farmer_review_emails_enabled = 'false'`, from 0023) in both projects, or farmers get every decision twice.
 
 ### Your admin access
 
@@ -157,7 +196,17 @@ Any host that runs a Dockerfile works. **Render** is the simplest:
   | `COMPANY_NAME` | Your LLC's exact name, e.g. `HarvestHub LLC` |
   | `SUPPORT_EMAIL` | `support@harvesthubmarket.com` |
   | `LEGAL_EFFECTIVE_DATE` | The date your reviewed policy takes effect |
+  | `RESEND_API_KEY` | Your Resend key (step 3). Order and account emails. |
+  | `EMAIL_FROM` | `HarvestHub <no-reply@harvesthubmarket.com>` |
+  | `TELNYX_API_KEY`, `TELNYX_FROM_NUMBER` | Step 3b, once your number is registered. Leave unset until then. |
+  | `GOOGLE_MAPS_API_KEY` | Step 3c |
+  | `CRON_SECRET` | Any long random string (a password generator's 40 characters). Used by the scheduled job below. |
 
+- [ ] **Scheduled job** (reminders, farmer approval/rejection notices, payout notices, and the monthly location refresh Google's terms require). Google Cloud → **Cloud Scheduler** → Create job (3 jobs a month are free):
+  - Frequency `*/15 * * * *`, time zone America/New_York.
+  - Target **HTTP**, method **POST**, URL `https://api.harvesthubmarket.com/api/v1/internal/jobs/run`.
+  - Header `X-Cron-Secret` = the same value as `CRON_SECRET`.
+  - "Force run" it once: the response lists what it sent, e.g. `{"free_period_ending": 0, ...}`. A 404 means the secret doesn't match.
 - [ ] Custom domain: add `api.harvesthubmarket.com` in Render, then create the **CNAME** record it gives you at your registrar. Render issues the HTTPS certificate.
 - [ ] Check these open in a browser:
   - `https://api.harvesthubmarket.com/health` → `{"status":"ok"}`
@@ -170,7 +219,7 @@ Any host that runs a Dockerfile works. **Render** is the simplest:
 - [ ] Developers → API keys (live): copy `pk_live_...` (for the app) and `sk_live_...` (for the backend).
 - [ ] Developers → Webhooks → **Add endpoint**:
   - URL `https://api.harvesthubmarket.com/api/v1/webhooks/stripe`
-  - Events: `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`.
+  - Events: `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, and for Harvest Pass `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `invoice.paid`, `invoice.payment_failed`.
   - Copy the signing secret (`whsec_...`) into the backend's `STRIPE_WEBHOOK_SECRET`.
 - [ ] Keep test keys in your development `.env` files. Live keys go **only** on Render and in EAS.
 
@@ -189,7 +238,7 @@ All commands run in `harvesthub/app`.
   npx eas-cli env:create --environment production --name EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY --value pk_live_... --visibility plaintext
   ```
   Do the same for `--environment preview` if you build preview APKs. Never put the service-role key or `sk_` keys here: everything in the app can be read by anyone.
-- [ ] **Rebuild your dev app once.** Its package id changed, so it installs as a new app called "HarvestHub Dev":
+- [ ] **Rebuild your dev app** (push notifications added native code, so the old dev build can't use them). Put `google-services.json` in place first (step 3d). It installs as "HarvestHub Dev":
   ```
   npx eas-cli build --profile development --platform android
   ```
@@ -235,8 +284,9 @@ All commands run in `harvesthub/app`.
   |---|---|---|---|
   | Personal info → **Name** | Required | App functionality, Account management | **Yes**, with the farm you order from (App functionality)* |
   | Personal info → **Email address** | Required | Account management, App functionality (verification and reset codes) | No |
-  | Personal info → **Phone number** | Required | App functionality | **Yes**, with the farm you order from* |
-  | Personal info → **Address** | Required | App functionality (nearby farms; farm pickup address) | No |
+  | Personal info → **Phone number** | Required | App functionality (and order texts, if the user turns them on) | **Yes**, with the farm you order from* |
+  | Personal info → **Address** | Required | App functionality (nearby farms; farm pickup address; address suggestions) | No (Google Maps is a service provider) |
+  | Device or other IDs → **Device or other IDs** (push notification token) | Optional (only if notifications are allowed) | App functionality | No |
   | Personal info → **Other info** (dietary preferences, farmer license numbers, references) | Optional | App functionality | No |
   | Financial info → **User payment info** | Optional (cash on pickup exists) | App functionality (card payments via Stripe) | No (Stripe is a service provider) |
   | Financial info → **Purchase history** | Required | App functionality | No |

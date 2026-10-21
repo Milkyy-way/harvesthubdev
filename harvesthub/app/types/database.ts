@@ -44,6 +44,8 @@ export interface CustomerProfileGeo {
   address_zip: string;
   latitude: number | null;
   longitude: number | null;
+  // How exact latitude/longitude are (harvesthub-backend/app/core/geocoding.py).
+  location_precision: 'exact' | 'interpolated' | 'approximate' | 'zip' | null;
   dietary_preferences: DietaryPreference[];
   produce_interests: ProduceInterest[];
 }

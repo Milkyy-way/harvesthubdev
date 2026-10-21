@@ -14,7 +14,7 @@
 
   <h3>Customers</h3>
   <ul>
-    <li>Your address, which we use to show farms near you. We convert it to map coordinates (see "Who we share it with").</li>
+    <li>Your address, which we use to show farms near you. We convert it to map coordinates (see "Who we share it with"). While you type an address, what you've typed is sent to Google Maps to suggest matching addresses.</li>
     <li>Optional preferences you choose: dietary preferences, the kinds of produce you're interested in, and how you heard about us.</li>
     <li>Your cart, orders, the pickup or delivery details of each order, and the ratings and comments you leave for farms.</li>
   </ul>
@@ -29,9 +29,15 @@
   <h3>Payments</h3>
   <p>Card payments are handled by Stripe. Card details you enter go directly to Stripe; HarvestHub never receives or stores
   your full card number. We keep a record of each payment (amount, status, and Stripe's reference IDs) and of any refunds.</p>
-  <p>If you join Harvest Pass, Stripe saves your card so it can charge renewals. We keep your plan, membership status,
-  billing dates, and your card's brand and last four digits (so the app can show which card is on file). If you share
-  a referral code, we keep a record of who joined with it and of the credits you earned.</p>
+  <p>We keep the dates of your free Harvest Pass month. If you join Harvest Pass, Stripe saves your card so it can
+  charge renewals. We keep your plan, membership status, billing dates, and your card's brand and last four digits (so
+  the app can show which card is on file).</p>
+
+  <h3>Notifications</h3>
+  <p>If you allow notifications on your phone, we keep a push token for it (an identifier Apple or Google gives the app
+  so we can reach that device), and we remove it when you sign out. We keep a record of the notifications we send you,
+  and your notification choices. Text messages are only sent if you turn them on in the app's notification settings; we
+  record when you did. Message and data rates may apply. Reply STOP to any text to stop them, or turn them off in the app.</p>
 
   <h3>Technical information</h3>
   <p>Our servers keep standard logs (such as IP address, time, and the request made) to operate and secure the service.
@@ -43,6 +49,7 @@
     <li>To run the marketplace: show farms and products, process orders and payments, arrange pickup, issue refunds, and pay farmers.</li>
     <li>To review and approve farmer applications.</li>
     <li>To send account emails, such as sign-up verification codes, password reset codes, and farmer application decisions.</li>
+    <li>To send notifications about your orders, Harvest Pass, and (for farmers) new orders, application decisions, and payouts — by push notification, email, and, if you turn them on, text message. You can choose which of these you get in the app's notification settings.</li>
     <li>To provide support, prevent fraud and abuse, keep the service secure, and meet legal, tax, and accounting obligations.</li>
   </ul>
 
@@ -50,7 +57,7 @@
   <ul>
     <li><strong>Farmers you order from.</strong> After your order is placed and paid (or placed, for cash on pickup), the farm receives your full name, your phone number, and what you ordered, so they can prepare it and contact you about pickup. You see this notice at checkout before you pay. Farmers stop seeing your phone number once the order is picked up or cancelled.</li>
     <li><strong>Customers.</strong> A farm's name, photos, bio, pickup address, products, and average rating are public in the app. Ratings are shown to farmers without the customer's name.</li>
-    <li><strong>Service providers</strong> that process data on our behalf: Supabase (database, sign-in, and file storage), Stripe (payments), our email delivery provider, our server hosting provider, Google (if you use Google sign-in), and the U.S. Census Bureau Geocoder and Zippopotam.us (to turn an address or ZIP code into map coordinates).</li>
+    <li><strong>Service providers</strong> that process data on our behalf: Supabase (database, sign-in, and file storage), Stripe (payments), Resend (email delivery), Telnyx (text messages, if you turn them on), Expo, Apple, and Google (push notifications), our server hosting provider, Google (if you use Google sign-in), and Google Maps Platform, the U.S. Census Bureau Geocoder, and Zippopotam.us (to suggest addresses as you type and turn an address or ZIP code into map coordinates).</li>
     <li><strong>When required by law</strong>, or to protect the rights, property, or safety of HarvestHub, our users, or others.</li>
     <li><strong>In a business transfer</strong>, such as a merger or sale, subject to this policy.</li>
   </ul>

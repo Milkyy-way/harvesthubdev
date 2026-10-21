@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { supabase } from '../../../lib/supabase';
+import { signOut } from '../../../lib/signOut';
 import { apiClient } from '../../../lib/apiClient';
 import { useAuth } from '../../../contexts/AuthContext';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
@@ -113,6 +113,12 @@ export default function FarmerAccount() {
         </Section>
 
         <Section title="More">
+          <SettingsRow
+            icon="notifications-none"
+            label="Notifications"
+            caption="Push, email and text alerts"
+            onPress={() => router.push('/(farmer)/notifications')}
+          />
           <SettingsRow icon="gavel" label="Legal" caption="Terms of Service, Privacy Policy" onPress={() => router.push('/(farmer)/legal')} />
           <SettingsRow
             icon="person-remove"
@@ -123,7 +129,7 @@ export default function FarmerAccount() {
           />
         </Section>
 
-        <Pressable style={styles.logoutButton} onPress={() => supabase.auth.signOut()}>
+        <Pressable style={styles.logoutButton} onPress={() => signOut()}>
           <MaterialIcons name="logout" size={16} color={colors.danger} />
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>

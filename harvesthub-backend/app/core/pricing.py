@@ -30,14 +30,14 @@ HARVEST_PASS_PLANS = {
     "3_months": (3, 0.10),
     "6_months": (6, 0.15),
 }
-HARVEST_PASS_TRIAL_DAYS = 7
-HARVEST_PASS_REFERRAL_TRIAL_DAYS = 30  # joining with a friend's referral code
+# Every new customer gets Harvest Pass free for this many days, no card
+# needed; after that they pay to keep it (decided with the user 2026-10-19 —
+# the same for everyone, and no referral rewards). It starts the first time
+# their account talks to the API (in practice, right after sign-up).
+HARVEST_PASS_FREE_DAYS = 30
 # Member benefit: no service fee when the checkout's items subtotal (all
 # farms in one Place Order, before promo codes) is at least this much.
 MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL = 25.00
-# What the referrer earns once their friend's first paid invoice goes
-# through: one month at the base price, as a credit on their next bill.
-HARVEST_PASS_REFERRAL_REWARD = HARVEST_PASS_MONTHLY_PRICE
 
 
 def harvest_pass_plan_price(plan: str) -> tuple[int, float, float]:

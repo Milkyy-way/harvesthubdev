@@ -20,6 +20,7 @@ from app.payouts import service as payouts_service
 from app.ratings import service as ratings_service
 from app.ratings.schemas import SubmitRatingRequest
 from app.cart.service import _cart_totals
+from app.notifications.service import Notice, notify, notify_many
 
 # Terminal from the customer's point of view — no further payment action
 # will change these without a new attempt (we don't build retries yet).
@@ -212,6 +213,62 @@ def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) ->
                 ).delete()
 
 
+# --- Notifications (app/notifications/) — always sent after the commit ------------
+
+
+def _item_count(db: Session, store_order_id) -> int:
+    return db.query(func.count(StoreOrderItem.id)).filter(StoreOrderItem.store_order_id == store_order_id).scalar() or 0
+
+
+def _is_cash(payment: Payment | None) -> bool:
+    return payment is not None and payment.payment_method == "cash_on_pickup"
+
+
+def _notify_order_placed(db: Session, order_id) -> None:
+    """The customer's receipt, and "new order" to each farm it was released
+    to. Dedupe keys make a second call (webhook + app sync racing) a no-op."""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        return
+    payment = db.query(Payment).filter(Payment.order_id == order_id).first()
+    notices = [
+        Notice(order.customer_id, "order_placed", {"order": build_order_out(db, order_id)}, f"order_placed:{order_id}")
+    ]
+    released = db.query(StoreOrder).filter(
+        StoreOrder.order_id == order_id,
+        StoreOrder.released_to_farmer_at.isnot(None),
+        StoreOrder.status != "cancelled",
+    )
+    for so in released:
+        notices.append(
+            Notice(
+                so.farmer_id,
+                "new_order",
+                {"item_count": _item_count(db, so.id), "total": float(so.subtotal), "cash": _is_cash(payment)},
+                f"new_order:{so.id}",
+            )
+        )
+    notify_many(db, notices)
+
+
+def _notify_farms_of_customer_cancellation(db: Session, store_orders: list[StoreOrder]) -> None:
+    """Only farms that had the order (released to them) — an unpaid card
+    order was never shown to the farm, so there's nothing to tell it."""
+    notify_many(
+        db,
+        [
+            Notice(
+                so.farmer_id,
+                "order_cancelled_by_customer",
+                {"item_count": _item_count(db, so.id), "total": float(so.subtotal)},
+                f"order_cancelled:{so.id}",
+            )
+            for so in store_orders
+            if so.released_to_farmer_at is not None
+        ],
+    )
+
+
 def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[dict, str | None]:
     customer_id = str(customer.id)
 
@@ -304,6 +361,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
     if request.payment_method == "cash_on_pickup":
         _commit_inventory_and_clear_cart(db, customer_id, order.id)
         db.commit()
+        _notify_order_placed(db, order.id)
     else:
         try:
             intent = stripe_client.create_payment_intent(grand_total, "usd", str(order.id), customer_id)
@@ -332,6 +390,7 @@ def _finalize_successful_payment(db: Session, order_id) -> None:
         {"status": "paid", "released_to_farmer_at": datetime.now(timezone.utc)}
     )
     db.commit()
+    _notify_order_placed(db, order_id)
 
 
 def reconcile_payment_intent(
@@ -475,6 +534,7 @@ def cancel_store_order(
 
     _cancel_one_store_order(db, order, store_order, cancelled_by, cancelled_by_role, reason)
     db.commit()
+    _notify_farms_of_customer_cancellation(db, [store_order])
     return build_order_out(db, order.id)
 
 
@@ -567,6 +627,7 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
 
     _sync_cash_payment_status(db, order.id, payment)
     db.commit()
+    _notify_farms_of_customer_cancellation(db, store_orders)
     return build_order_out(db, order.id)
 
 
@@ -633,6 +694,21 @@ def mark_store_order_ready_for_pickup(db: Session, farmer_id, store_order_id: st
     store_order.status = "ready_for_pickup"
     _sync_cash_payment_status(db, store_order.order_id, payment)
     db.commit()
+
+    order = db.query(Order).filter(Order.id == store_order.order_id).one()
+    address = ", ".join(p for p in (store_order.pickup_address_street, store_order.pickup_address_city) if p)
+    notify(
+        db,
+        order.customer_id,
+        "order_ready",
+        {
+            "farm_name": store_order.farm_name,
+            "order_id": str(order.id),
+            "pickup_address": address or None,
+            "cash_total": float(store_order.total) if is_cash else None,
+        },
+        dedupe_key=f"order_ready:{store_order.id}",
+    )
     return store_order
 
 
@@ -652,6 +728,18 @@ def farmer_cancel_store_order(db: Session, farmer_id, store_order_id: str, reaso
     if refunded_to_card:
         payouts_service.create_cancellation_fee_entry(db, store_order)
     db.commit()
+    notify(
+        db,
+        order.customer_id,
+        "order_cancelled_by_farm",
+        {
+            "farm_name": store_order.farm_name,
+            "order_id": str(order.id),
+            "reason": reason,
+            "refund_amount": float(store_order.total) if refunded_to_card else 0,
+        },
+        dedupe_key=f"order_cancelled:{store_order.id}",
+    )
     return store_order
 
 

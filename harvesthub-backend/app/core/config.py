@@ -17,6 +17,29 @@ class Settings(BaseSettings):
     # app isn't affected by CORS; this only matters for web pages.
     CORS_ORIGINS: str = "*"
 
+    # --- Notifications (app/notifications/). Each channel stays off, quietly,
+    # until its key is set — so development works with none of them.
+    # Email via Resend (resend.com): API key, and a From address on a domain
+    # verified in Resend.
+    RESEND_API_KEY: str | None = None
+    EMAIL_FROM: str = "HarvestHub <no-reply@harvesthubmarket.com>"
+    # Text messages via Telnyx (telnyx.com): API key and the sending number
+    # (+1..., registered for 10DLC or toll-free verified — see LAUNCH_ANDROID.md).
+    TELNYX_API_KEY: str | None = None
+    TELNYX_FROM_NUMBER: str | None = None
+    # Push via Expo's push service. Optional: only needed if "enhanced push
+    # security" is switched on for the project at expo.dev.
+    EXPO_ACCESS_TOKEN: str | None = None
+    # Shared secret for the scheduled-jobs endpoint (POST /internal/jobs/run),
+    # sent by Cloud Scheduler in the X-Cron-Secret header. Unset = endpoint off.
+    CRON_SECRET: str | None = None
+
+    # Google Maps Platform key, server only (never in the app): address
+    # suggestions while typing (Places API (New), proxied by /addresses/*) and
+    # geocoding (Geocoding API). Unset = no suggestions, and the free
+    # Census/ZIP geocoders (less exact).
+    GOOGLE_MAPS_API_KEY: str | None = None
+
     # Shown on the public legal pages (/privacy, /terms, /delete-account).
     COMPANY_NAME: str = "HarvestHub"  # the registered company name once the LLC exists
     SUPPORT_EMAIL: str = "support@harvesthubmarket.com"

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { colors, spacing, fonts } from '../../constants/theme';
 import { TextField } from '../../components/TextField';
+import { AddressSearchField } from '../../components/AddressSearchField';
 import { TagSelector } from '../../components/TagSelector';
 import { DIETARY_PREFERENCE_OPTIONS, PRODUCE_INTEREST_OPTIONS } from '../../lib/validation/schemas';
 import type { DietaryPreference, ProduceInterest } from '../../types/database';
@@ -90,7 +91,16 @@ export default function RoleSetupDetails() {
         />
 
         <Text style={styles.sectionTitle}>Delivery / pickup address</Text>
-        <TextField placeholder="Street address" value={addressStreet} onChangeText={setAddressStreet} />
+        <AddressSearchField
+          value={addressStreet}
+          onChangeText={setAddressStreet}
+          onSelectAddress={(a) => {
+            setAddressStreet(a.street);
+            setAddressCity(a.city);
+            setAddressState(a.state);
+            setAddressZip(a.zip);
+          }}
+        />
         <TextField placeholder="City" value={addressCity} onChangeText={setAddressCity} />
         <View style={styles.row}>
           <TextField style={styles.flex1} placeholder="State" value={addressState} onChangeText={setAddressState} />

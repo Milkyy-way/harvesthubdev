@@ -312,7 +312,7 @@ function HarvestPassNote({ preview, onPress }: { preview: CheckoutPreviewRespons
       <Text style={styles.passEmoji}>🌾</Text>
       <Text style={styles.passText}>
         Save <Text style={styles.passBold}>${preview.member_potential_savings.toFixed(2)}</Text> on this order with{' '}
-        <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on orders of ${min.toFixed(0)}+. Try it free.
+        <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on orders of ${min.toFixed(0)}+.
       </Text>
       <MaterialIcons name="chevron-right" size={20} color={colors.primaryDark} />
     </Pressable>

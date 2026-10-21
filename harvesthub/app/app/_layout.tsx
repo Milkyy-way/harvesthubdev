@@ -11,6 +11,7 @@ import { Newsreader_600SemiBold, Newsreader_700Bold } from '@expo-google-fonts/n
 import { Manrope_800ExtraBold } from '@expo-google-fonts/manrope';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { resolveRedirect } from '../lib/routeGuard';
+import { usePushNotifications } from '../lib/pushNotifications';
 import { colors } from '../constants/theme';
 
 const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY;
@@ -32,6 +33,14 @@ function RootNavigation() {
   const { session, profile, farmerVerification, loading, passwordRecovery } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  // Once signed in to a real account (customer or farmer — farmers awaiting
+  // approval too, so they hear about the decision), register this phone for
+  // push notifications, and open the screen a tapped notification points at.
+  usePushNotifications({
+    userId: session?.user.id ?? null,
+    ready: !loading && !!profile?.role && !passwordRecovery,
+  });
 
   useEffect(() => {
     if (loading) return;

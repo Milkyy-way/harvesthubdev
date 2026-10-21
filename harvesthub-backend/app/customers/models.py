@@ -15,6 +15,8 @@ class CustomerProfile(Base):
     latitude = Column(Float, nullable=True)     # new — added via migration below
     longitude = Column(Float, nullable=True)    # new
     geocoded_at = Column(TIMESTAMP, nullable=True)  # new
+    # How exact latitude/longitude are — see app/core/geocoding.py (0031).
+    location_precision = Column(String, nullable=True)
     # Existed since 0003 (signup captures these) but never mapped here until
     # the Account tab needed to display them — same "map only what's used
     # so far" discipline as every other model in this project.

@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "1077433981943",
+    "project_id": "harvesthub-509411",
+    "storage_bucket": "harvesthub-509411.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1077433981943:android:9eb00d0e7fbe60c3c7acf2",
+        "android_client_info": {
+          "package_name": "com.harvesthubmarket.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1077433981943-q2opkqejc1gsiute7fedvbdqmbjdrsp9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLbbh2i4qxVlHOpYaD-0soFVwkMyL17JY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1077433981943-q2opkqejc1gsiute7fedvbdqmbjdrsp9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1077433981943:android:2364b92e4e34ae3ec7acf2",
+        "android_client_info": {
+          "package_name": "com.harvesthubmarket.app.dev"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1077433981943-q2opkqejc1gsiute7fedvbdqmbjdrsp9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLbbh2i4qxVlHOpYaD-0soFVwkMyL17JY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1077433981943-q2opkqejc1gsiute7fedvbdqmbjdrsp9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

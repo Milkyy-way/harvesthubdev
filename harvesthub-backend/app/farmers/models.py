@@ -17,6 +17,7 @@ class FarmerProfile(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     geocoded_at = Column(TIMESTAMP, nullable=True)
+    location_precision = Column(String, nullable=True)  # see app/core/geocoding.py (0031)
     photo_url = Column(String, nullable=True)
 
 

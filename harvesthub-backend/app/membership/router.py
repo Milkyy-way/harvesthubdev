@@ -10,14 +10,13 @@ from app.membership.schemas import (
     PrepareCardUpdateOut,
     PrepareJoinOut,
     PrepareJoinRequest,
-    ReferralCodeCheckOut,
-    ReferralSummaryOut,
     SubscribeRequest,
     UpdateCardRequest,
 )
 
 # Harvest Pass, the customer membership — see app/membership/service.py for
-# the join flow (card first, then subscription).
+# the free period every new customer gets and the join flow (card first,
+# then subscription).
 router = APIRouter(prefix="/membership", tags=["membership"])
 
 
@@ -33,12 +32,12 @@ def prepare_join(
     customer=Depends(get_current_customer),
     user=Depends(get_current_user),
 ):
-    return service.prepare_join(db, customer.id, user.get("email"), payload.plan, payload.referral_code)
+    return service.prepare_join(db, customer.id, user.get("email"), payload.plan)
 
 
 @router.post("/subscribe", response_model=MembershipOverviewOut)
 def subscribe(payload: SubscribeRequest, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
-    return service.subscribe(db, customer.id, payload.plan, payload.setup_intent_id, payload.referral_code)
+    return service.subscribe(db, customer.id, payload.plan, payload.setup_intent_id)
 
 
 @router.post("/sync", response_model=MembershipOverviewOut)
@@ -64,13 +63,3 @@ def prepare_card_update(db: Session = Depends(get_db), customer=Depends(get_curr
 @router.post("/payment-method", response_model=MembershipOverviewOut)
 def update_card(payload: UpdateCardRequest, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
     return service.update_card(db, customer.id, payload.setup_intent_id)
-
-
-@router.get("/referral", response_model=ReferralSummaryOut)
-def read_referral(db: Session = Depends(get_db), customer=Depends(get_current_customer)):
-    return service.referral_summary(db, customer.id)
-
-
-@router.get("/referral-codes/{code}", response_model=ReferralCodeCheckOut)
-def check_referral_code(code: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
-    return service.check_referral_code(db, customer.id, code)

@@ -14,10 +14,12 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { supabase } from '../../lib/supabase';
+import { signOut } from '../../lib/signOut';
 import { useAuth } from '../../contexts/AuthContext';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { Logo } from '../../components/Logo';
 import { TextField } from '../../components/TextField';
+import { AddressSearchField } from '../../components/AddressSearchField';
 import { TagSelector } from '../../components/TagSelector';
 import { DocumentUploadField } from '../../components/DocumentUploadField';
 import { removeVerificationDocument, uploadVerificationDocument } from '../../lib/storage';
@@ -127,7 +129,7 @@ export default function FarmerApplication() {
       if (router.canGoBack()) router.back();
       else router.replace('/(farmer)/(tabs)');
     } else {
-      supabase.auth.signOut();
+      signOut();
     }
   };
 
@@ -143,11 +145,6 @@ export default function FarmerApplication() {
     if (!userId) return;
 
     const d = result.data;
-    const addressChanged =
-      d.addressStreet !== (farmerProfile?.address_street ?? '') ||
-      d.addressCity !== (farmerProfile?.address_city ?? '') ||
-      d.addressState !== (farmerProfile?.address_state ?? '') ||
-      d.addressZip !== (farmerProfile?.address_zip ?? '');
 
     setSaving(true);
     const { error: updateError } = await supabase
@@ -160,10 +157,8 @@ export default function FarmerApplication() {
         farm_types: d.farmTypes,
         years_in_operation: d.yearsInOperation,
         tax_id: d.taxId,
-        // The backend only geocodes a farm while both of these are null
-        // (app/farmers/service.py::get_or_geocode_farmer) — clear them when
-        // the address changes so distance sorting uses the new location.
-        ...(addressChanged ? { latitude: null, longitude: null, geocoded_at: null } : {}),
+        // A changed address clears the farm's map location by itself (a
+        // database trigger, 0031), so the API geocodes the new one.
       })
       .eq('id', userId);
     setSaving(false);
@@ -332,10 +327,13 @@ export default function FarmerApplication() {
         {step === 'farm-details' ? (
           <>
             <Card title="Farm location">
-              <TextField
+              <AddressSearchField
                 placeholder="Farm street address"
                 value={farmDetails.addressStreet}
                 onChangeText={(addressStreet) => updateFarmDetails({ addressStreet })}
+                onSelectAddress={(a) =>
+                  updateFarmDetails({ addressStreet: a.street, addressCity: a.city, addressState: a.state, addressZip: a.zip })
+                }
                 error={fieldErrors.addressStreet}
               />
               <TextField

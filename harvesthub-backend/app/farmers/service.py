@@ -1,6 +1,5 @@
-import requests
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import and_, exists
 from sqlalchemy.orm import Session
@@ -8,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.geo import haversine_km
+from app.core.geocoding import REFRESH_AFTER, geocode_address, needs_geocode
 from app.core.models import Profile
 from app.farmers.models import FarmerProfile, FarmerCertification
 from app.products.models import Product
@@ -47,39 +47,42 @@ def get_current_farmer(
     return farmer
 
 
-def get_or_geocode_farmer(db: Session, farmer_id: str) -> FarmerProfile:
-    """Mirrors app/customers/service.py's get_or_geocode_profile(): full-
-    address Census geocode first, zip-centroid fallback if that misses,
-    geocoded_at marked either way so a bad/ungeocodable address is only
-    ever attempted once, not retried on every feed request."""
-    farmer = db.query(FarmerProfile).filter(FarmerProfile.id == farmer_id).first()
-    if not farmer or farmer.latitude is not None or farmer.geocoded_at is not None:
-        return farmer
-
-    if farmer.address_street and farmer.address_city and farmer.address_state and farmer.address_zip:
-        address = f"{farmer.address_street}, {farmer.address_city}, {farmer.address_state} {farmer.address_zip}"
-        resp = requests.get(
-            "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress",
-            params={"address": address, "benchmark": "Public_AR_Current", "format": "json"},
-            timeout=5,
-        )
-        matches = resp.json().get("result", {}).get("addressMatches", [])
-        if matches:
-            coords = matches[0]["coordinates"]
-            farmer.latitude = coords["y"]
-            farmer.longitude = coords["x"]
-
-    if farmer.latitude is None and farmer.address_zip:
-        resp = requests.get(f"https://api.zippopotam.us/us/{farmer.address_zip}", timeout=5)
-        if resp.status_code == 200:
-            place = resp.json()["places"][0]
-            farmer.latitude = float(place["latitude"])
-            farmer.longitude = float(place["longitude"])
-
-    farmer.geocoded_at = datetime.utcnow()
+def _geocode_farm(db: Session, farmer: FarmerProfile) -> None:
+    result = geocode_address(farmer.address_street, farmer.address_city, farmer.address_state, farmer.address_zip)
+    if result is not None:
+        farmer.latitude, farmer.longitude = result.latitude, result.longitude
+        farmer.location_precision = result.precision
+    farmer.geocoded_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(farmer)
+
+
+def get_or_geocode_farmer(db: Session, farmer_id: str) -> FarmerProfile:
+    """Mirrors app/customers/service.py's get_or_geocode_profile() — same
+    geocoder (app/core/geocoding.py), geocoded_at marked either way so a
+    bad/ungeocodable address is attempted once (and again monthly), not on
+    every feed request. A farm keeps its previous coordinates if a re-geocode
+    finds nothing better."""
+    farmer = db.query(FarmerProfile).filter(FarmerProfile.id == farmer_id).first()
+    if farmer and needs_geocode(farmer.geocoded_at):
+        _geocode_farm(db, farmer)
     return farmer
+
+
+def refresh_stale_locations(db: Session, limit: int = 100) -> int:
+    """Scheduled job: re-geocode farms before their coordinates turn 30 days
+    old (Google's limit), oldest first — so the feed never has to."""
+    cutoff = datetime.now(timezone.utc) - REFRESH_AFTER
+    farms = (
+        db.query(FarmerProfile)
+        .filter(FarmerProfile.geocoded_at < cutoff)
+        .order_by(FarmerProfile.geocoded_at)
+        .limit(limit)
+        .all()
+    )
+    for farmer in farms:
+        _geocode_farm(db, farmer)
+    return len(farms)
 
 
 def list_farmer_feed(
@@ -152,10 +155,10 @@ def list_farmer_feed(
 
     results = []
     for farmer in farmers:
-        if farmer.latitude is None or farmer.longitude is None:
+        if needs_geocode(farmer.geocoded_at):
             farmer = get_or_geocode_farmer(db, farmer.id)
-            if farmer is None or farmer.latitude is None:
-                continue  # still ungeocoded (bad address / API down) — exclude, don't crash the feed
+        if farmer is None or farmer.latitude is None or farmer.longitude is None:
+            continue  # still ungeocoded (bad address / API down) — exclude, don't crash the feed
 
         distance = haversine_km(customer_lat, customer_lon, farmer.latitude, farmer.longitude)
 
@@ -200,10 +203,10 @@ def get_spotlight_farmers(
 
     scored = []
     for farmer in farmers:
-        if farmer.latitude is None or farmer.longitude is None:
+        if needs_geocode(farmer.geocoded_at):
             farmer = get_or_geocode_farmer(db, farmer.id)
-            if farmer is None or farmer.latitude is None:
-                continue
+        if farmer is None or farmer.latitude is None or farmer.longitude is None:
+            continue
 
         distance = haversine_km(customer_lat, customer_lon, farmer.latitude, farmer.longitude)
         avg_rating, rating_count = summaries.get(farmer.id, (None, 0))
@@ -249,7 +252,7 @@ def get_farmer_detail(
     if not farmer:
         return None
 
-    if farmer.latitude is None or farmer.longitude is None:
+    if needs_geocode(farmer.geocoded_at):
         farmer = get_or_geocode_farmer(db, farmer.id)
 
     distance = None

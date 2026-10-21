@@ -1,4 +1,13 @@
+import fs from 'fs';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
+
+// Android push notifications go through Firebase Cloud Messaging, which needs
+// google-services.json (Firebase console -> your project -> Android apps; one
+// file covers both package names). Optional, so builds still work before it
+// exists — Android just can't get a push token without it. On EAS it can come
+// from a "file" environment variable instead of the repo.
+const googleServicesFile = process.env.GOOGLE_SERVICES_JSON ?? './google-services.json';
+const hasGoogleServices = fs.existsSync(googleServicesFile);
 
 // app.json holds the real (production) app: "HarvestHub",
 // com.harvesthubmarket.app, harvesthub:// links. The development build is
@@ -10,7 +19,11 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 // server. Anything else (eas submit, a production build) gets production.
 const variant = process.env.APP_VARIANT === 'development' ? 'development' : 'production';
 
-export default ({ config }: ConfigContext): ExpoConfig => {
+export default ({ config: baseConfig }: ConfigContext): ExpoConfig => {
+  const config = hasGoogleServices
+    ? { ...baseConfig, android: { ...baseConfig.android, googleServicesFile } }
+    : baseConfig;
+
   if (variant === 'production') {
     // On an EAS build server (EAS_BUILD is set there), fail the build rather
     // than ship an app that can't reach the API: release builds can't make

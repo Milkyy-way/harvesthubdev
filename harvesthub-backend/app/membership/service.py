@@ -1,10 +1,16 @@
-"""Harvest Pass — the customer membership (see 0028_harvest_pass.sql).
+"""Harvest Pass — the customer membership (see 0028_harvest_pass.sql and
+0029_harvest_pass_free_period.sql).
 
-Flow, card first: /prepare saves a card with a Stripe SetupIntent (the app
+Every new customer gets Harvest Pass free for HARVEST_PASS_FREE_DAYS, with no
+card: a harvest_pass_free_periods row, created the first time their account
+reaches the API. After that they pay to keep it.
+
+Paying, card first: /prepare saves a card with a Stripe SetupIntent (the app
 shows the PaymentSheet), then /subscribe starts the subscription on that
-card — with a free trial for first-time members, or charging the first
-period right away for returning ones. A membership row only ever exists for
-a subscription with a card behind it.
+card. Joining while the free period is still running charges nothing until
+it ends (a Stripe trial up to the same date); joining after it charges the
+first period right away. A membership row only ever exists for a
+subscription with a card behind it.
 
 The Stripe webhook keeps every row in sync from then on (renewals, failed
 payments, cancellations); /membership/sync is the app's instant-feedback
@@ -12,27 +18,26 @@ fallback. Both go through sync_subscription(), idempotently — the same
 pattern as orders' reconcile_payment_intent.
 """
 import logging
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import stripe
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.models import Profile
 from app.core.pricing import (
+    HARVEST_PASS_FREE_DAYS,
     HARVEST_PASS_MONTHLY_PRICE,
     HARVEST_PASS_PLANS,
-    HARVEST_PASS_REFERRAL_REWARD,
-    HARVEST_PASS_REFERRAL_TRIAL_DAYS,
-    HARVEST_PASS_TRIAL_DAYS,
     MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
     harvest_pass_plan_price,
 )
-from app.membership.models import Membership, Referral, ReferralCode, StripeCustomer
+from app.membership.models import FreePeriod, Membership, StripeCustomer
+from app.notifications import service as notifications
 from app.orders.models import Order, StoreOrder
 from app.payments import stripe_client
 
@@ -46,9 +51,9 @@ LIVE_STATUSES = ("incomplete", "trialing", "active", "past_due", "unpaid", "paus
 # gives up (it then moves the subscription to canceled or unpaid).
 BENEFIT_STATUSES = ("trialing", "active", "past_due")
 
-# No 0/O or 1/I — codes get read aloud and typed by hand.
-_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-_CODE_LENGTH = 8
+# Joining with less free time left than this charges right away instead —
+# not worth a Stripe trial measured in minutes.
+_MIN_TRIAL_LEFT = timedelta(hours=1)
 
 _SETUP_PURPOSE_JOIN = "harvest_pass"
 _SETUP_PURPOSE_CARD = "harvest_pass_card"
@@ -66,18 +71,36 @@ def live_membership(db: Session, customer_id) -> Membership | None:
     )
 
 
+def ensure_free_period(db: Session, customer_id) -> FreePeriod:
+    """The customer's free Harvest Pass period, started now if they don't
+    have one yet. Commits only when it creates the row (once per customer);
+    a concurrent request creating it too is harmless (ON CONFLICT)."""
+    row = db.get(FreePeriod, customer_id)
+    if row:
+        return row
+    now = datetime.now(timezone.utc)
+    db.execute(
+        pg_insert(FreePeriod)
+        .values(customer_id=customer_id, starts_at=now, ends_at=now + timedelta(days=HARVEST_PASS_FREE_DAYS), created_at=now)
+        .on_conflict_do_nothing(index_elements=["customer_id"])
+    )
+    db.commit()
+    return db.get(FreePeriod, customer_id)
+
+
+def _free_period_active(period: FreePeriod | None) -> bool:
+    return period is not None and period.ends_at > datetime.now(timezone.utc)
+
+
 def has_member_benefits(db: Session, customer_id) -> bool:
-    return (
+    """A paid membership in good standing, or the free period still running."""
+    paid = (
         db.query(Membership.id)
         .filter(Membership.customer_id == customer_id, Membership.status.in_(BENEFIT_STATUSES))
         .first()
         is not None
     )
-
-
-def _has_had_membership(db: Session, customer_id) -> bool:
-    """Any membership row at all — the free trial is once per customer."""
-    return db.query(Membership.id).filter(Membership.customer_id == customer_id).first() is not None
+    return paid or _free_period_active(ensure_free_period(db, customer_id))
 
 
 def total_member_savings(db: Session, customer_id) -> float:
@@ -212,73 +235,57 @@ def _invoice_subscription_id(invoice: dict) -> str | None:
 
 
 def handle_invoice_event(db: Session, invoice: dict, paid: bool) -> None:
-    """invoice.paid / invoice.payment_failed from the webhook. A paid invoice
-    for a real amount (not the $0 trial-start invoice) is also what earns
-    the friend who referred this member their free month."""
+    """invoice.paid / invoice.payment_failed from the webhook. A failed
+    renewal also tells the member to update their card — once per invoice,
+    however many times Stripe retries it."""
     subscription_id = _invoice_subscription_id(invoice)
     if not subscription_id:
         return
     sync_subscription(db, subscription_id)
-    if paid and (invoice.get("total") or 0) > 0:
-        _reward_referral(db, subscription_id)
+    if paid or (invoice.get("amount_due") or 0) <= 0:
+        return
+    membership = db.query(Membership).filter(Membership.stripe_subscription_id == subscription_id).first()
+    if membership:
+        notifications.notify(
+            db,
+            membership.customer_id,
+            "membership_payment_failed",
+            {"amount": (invoice.get("amount_due") or 0) / 100},
+            dedupe_key=f"membership_payment_failed:{invoice.get('id')}",
+        )
 
 
 # --- Joining -------------------------------------------------------------------------
 
 
-def _validate_referral_code(db: Session, customer_id, code: str) -> ReferralCode:
-    normalized = code.strip().upper()
-    row = db.query(ReferralCode).filter(ReferralCode.code == normalized).first()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That referral code doesn't exist. Check it and try again.")
-    if str(row.customer_id) == str(customer_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You can't use your own referral code.")
-    referrer = db.query(Profile).filter(Profile.id == row.customer_id).first()
-    if not referrer or referrer.status != "active":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That referral code is no longer active.")
-    if _has_had_membership(db, customer_id) or db.query(Referral.id).filter(Referral.referred_id == customer_id).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Referral codes are for first-time Harvest Pass members.",
-        )
-    return row
+def _trial_end(db: Session, customer_id) -> datetime | None:
+    """Joining during the free period: nothing is charged until it ends."""
+    period = ensure_free_period(db, customer_id)
+    if period and period.ends_at - datetime.now(timezone.utc) >= _MIN_TRIAL_LEFT:
+        return period.ends_at
+    return None
 
 
-def check_referral_code(db: Session, customer_id, code: str) -> dict:
-    row = _validate_referral_code(db, customer_id, code)
-    referrer = db.query(Profile).filter(Profile.id == row.customer_id).first()
-    first_name = (referrer.full_name or "").strip().split(" ")[0] if referrer and referrer.full_name else None
-    return {"code": row.code, "trial_days": HARVEST_PASS_REFERRAL_TRIAL_DAYS, "referrer_first_name": first_name or None}
-
-
-def _trial_days(first_time: bool, referral: ReferralCode | None) -> int:
-    if not first_time:
-        return 0
-    return HARVEST_PASS_REFERRAL_TRIAL_DAYS if referral else HARVEST_PASS_TRIAL_DAYS
-
-
-def _join_terms(plan: str, trial_days: int) -> dict:
+def _join_terms(plan: str, trial_end: datetime | None) -> dict:
     months, per_month, billed = harvest_pass_plan_price(plan)
-    first_charge_at = datetime.now(timezone.utc) + timedelta(days=trial_days)
+    first_charge_at = trial_end or datetime.now(timezone.utc)
     return {
         "plan": plan,
         "interval_months": months,
         "price_per_month": per_month,
         "billed_amount": billed,
-        "trial_days": trial_days,
-        "due_today": 0.0 if trial_days else billed,
+        "free_until": _iso(trial_end),
+        "due_today": 0.0 if trial_end else billed,
         "first_charge_at": first_charge_at.isoformat(),
     }
 
 
-def prepare_join(db: Session, customer_id, email: str | None, plan: str, referral_code: str | None) -> dict:
-    """Step 1: a SetupIntent the app confirms with the PaymentSheet. Validates
-    the plan and referral code first, so a bad code fails before card entry."""
+def prepare_join(db: Session, customer_id, email: str | None, plan: str) -> dict:
+    """Step 1: a SetupIntent the app confirms with the PaymentSheet."""
     _require_plan(plan)
     if live_membership(db, customer_id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already have Harvest Pass.")
-    referral = _validate_referral_code(db, customer_id, referral_code) if referral_code else None
-    trial_days = _trial_days(not _has_had_membership(db, customer_id), referral)
+    trial_end = _trial_end(db, customer_id)
 
     stripe_customer_id = get_or_create_stripe_customer(db, customer_id, email)
     try:
@@ -287,7 +294,7 @@ def prepare_join(db: Session, customer_id, email: str | None, plan: str, referra
         )
     except stripe.error.StripeError as e:
         raise _stripe_unavailable(e)
-    return {"setup_intent_id": intent.id, "setup_intent_client_secret": intent.client_secret, **_join_terms(plan, trial_days)}
+    return {"setup_intent_id": intent.id, "setup_intent_client_secret": intent.client_secret, **_join_terms(plan, trial_end)}
 
 
 def _confirmed_setup_intent(db: Session, customer_id, setup_intent_id: str, purpose: str) -> dict:
@@ -312,7 +319,7 @@ def _confirmed_setup_intent(db: Session, customer_id, setup_intent_id: str, purp
     return intent
 
 
-def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str, referral_code: str | None) -> dict:
+def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str) -> dict:
     """Step 2: start the subscription on the card saved in step 1."""
     _require_plan(plan)
     if live_membership(db, customer_id):
@@ -320,8 +327,7 @@ def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str, referra
 
     intent = _confirmed_setup_intent(db, customer_id, setup_intent_id, _SETUP_PURPOSE_JOIN)
     payment_method = intent["payment_method"]
-    referral = _validate_referral_code(db, customer_id, referral_code) if referral_code else None
-    trial_days = _trial_days(not _has_had_membership(db, customer_id), referral)
+    trial_end = _trial_end(db, customer_id)
     months, _, billed = harvest_pass_plan_price(plan)
 
     try:
@@ -330,7 +336,7 @@ def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str, referra
             intent["customer"],
             price_id,
             payment_method["id"],
-            trial_days,
+            trial_end,
             metadata={"profile_id": str(customer_id), "plan": plan},
             idempotency_key=f"harvest-pass-{setup_intent_id}",
         )
@@ -353,17 +359,6 @@ def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str, referra
     _apply_subscription(membership, sub)
     _apply_card(membership, payment_method)
     db.add(membership)
-    if referral:
-        db.add(
-            Referral(
-                id=uuid.uuid4(),
-                referrer_id=referral.customer_id,
-                referred_id=customer_id,
-                code=referral.code,
-                membership_id=membership.id,
-                status="pending",
-            )
-        )
     try:
         db.commit()
     except IntegrityError:
@@ -500,94 +495,22 @@ def _membership_out(membership: Membership) -> dict:
 
 
 def get_overview(db: Session, customer_id) -> dict:
+    period = ensure_free_period(db, customer_id)
+    free_active = _free_period_active(period)
     membership = live_membership(db, customer_id)
-    first_time = not _has_had_membership(db, customer_id)
+    paid_benefits = membership is not None and membership.status in BENEFIT_STATUSES
     return {
         "monthly_price": HARVEST_PASS_MONTHLY_PRICE,
         "plans": plan_options(),
-        "trial_days": HARVEST_PASS_TRIAL_DAYS if first_time else 0,
-        "referral_trial_days": HARVEST_PASS_REFERRAL_TRIAL_DAYS if first_time else 0,
+        "free_days": HARVEST_PASS_FREE_DAYS,
+        "free_period_ends_at": _iso(period.ends_at),
+        "free_period_active": free_active,
         "free_service_fee_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
-        "is_member": membership is not None and membership.status in BENEFIT_STATUSES,
+        # Has the benefits right now — paid, or the free period.
+        "is_member": paid_benefits or free_active,
         "membership": _membership_out(membership) if membership else None,
         "total_savings": total_member_savings(db, customer_id),
     }
-
-
-# --- Referrals ------------------------------------------------------------------------
-
-
-def get_or_create_referral_code(db: Session, customer_id) -> str:
-    row = db.query(ReferralCode).filter(ReferralCode.customer_id == customer_id).first()
-    if row:
-        return row.code
-    for _ in range(5):
-        code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(_CODE_LENGTH))
-        db.add(ReferralCode(customer_id=customer_id, code=code))
-        try:
-            db.commit()
-            return code
-        except IntegrityError:
-            db.rollback()
-            row = db.query(ReferralCode).filter(ReferralCode.customer_id == customer_id).first()
-            if row:
-                return row.code  # a concurrent request created it
-            # otherwise the code itself collided — try another
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Couldn't create a referral code. Please try again.")
-
-
-def referral_summary(db: Session, customer_id) -> dict:
-    code = get_or_create_referral_code(db, customer_id)
-    referrals = db.query(Referral).filter(Referral.referrer_id == customer_id, Referral.status != "void").all()
-    rewarded = [r for r in referrals if r.status == "rewarded"]
-    return {
-        "code": code,
-        "reward_amount": HARVEST_PASS_REFERRAL_REWARD,
-        "friend_trial_days": HARVEST_PASS_REFERRAL_TRIAL_DAYS,
-        "joined_count": len(referrals),
-        "rewarded_count": len(rewarded),
-        "credit_earned": round(sum(float(r.reward_amount or 0) for r in rewarded), 2),
-    }
-
-
-def _reward_referral(db: Session, subscription_id: str) -> None:
-    """Credits the referrer one month once the friend's first paid invoice
-    goes through. Safe to call on every paid invoice and on webhook retries:
-    only a 'pending' referral is rewarded, under a row lock, and the Stripe
-    credit carries an idempotency key."""
-    membership = db.query(Membership).filter(Membership.stripe_subscription_id == subscription_id).first()
-    if not membership:
-        return
-    pending = (
-        db.query(Referral)
-        .filter(Referral.referred_id == membership.customer_id, Referral.status == "pending")
-        .first()
-    )
-    if not pending:
-        return
-
-    referrer = db.query(Profile).filter(Profile.id == pending.referrer_id).first()
-    if not referrer or referrer.status != "active":
-        pending.status = "void"  # the referrer's account is gone — nobody to credit
-        db.commit()
-        return
-
-    stripe_customer_id = get_or_create_stripe_customer(db, pending.referrer_id)
-    referral = db.query(Referral).filter(Referral.id == pending.id).with_for_update().one()
-    if referral.status != "pending":
-        db.rollback()
-        return
-    txn_id = stripe_client.credit_customer_balance(
-        stripe_customer_id,
-        HARVEST_PASS_REFERRAL_REWARD,
-        "Harvest Pass referral reward — a friend joined",
-        idempotency_key=f"referral-reward-{referral.id}",
-    )
-    referral.status = "rewarded"
-    referral.reward_amount = HARVEST_PASS_REFERRAL_REWARD
-    referral.stripe_balance_transaction_id = txn_id
-    referral.rewarded_at = datetime.now(timezone.utc)
-    db.commit()
 
 
 # --- Account deletion -------------------------------------------------------------------

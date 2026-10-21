@@ -32,17 +32,17 @@ class MembershipOut(BaseModel):
 class MembershipOverviewOut(BaseModel):
     monthly_price: float
     plans: list[PlanOptionOut]
-    trial_days: int  # 0 once the customer has had Harvest Pass before
-    referral_trial_days: int
+    free_days: int  # how long every new customer's free period lasts
+    free_period_ends_at: Optional[str]
+    free_period_active: bool
     free_service_fee_min_subtotal: float
-    is_member: bool
+    is_member: bool  # has the benefits right now — paid, or the free period
     membership: Optional[MembershipOut]
     total_savings: float
 
 
 class PrepareJoinRequest(BaseModel):
     plan: HarvestPassPlan
-    referral_code: Optional[str] = None
 
 
 class PrepareJoinOut(BaseModel):
@@ -52,7 +52,7 @@ class PrepareJoinOut(BaseModel):
     interval_months: int
     price_per_month: float
     billed_amount: float
-    trial_days: int
+    free_until: Optional[str]  # joining during the free period: no charge until then
     due_today: float
     first_charge_at: str
 
@@ -60,7 +60,6 @@ class PrepareJoinOut(BaseModel):
 class SubscribeRequest(BaseModel):
     plan: HarvestPassPlan
     setup_intent_id: str
-    referral_code: Optional[str] = None
 
 
 class PrepareCardUpdateOut(BaseModel):
@@ -70,18 +69,3 @@ class PrepareCardUpdateOut(BaseModel):
 
 class UpdateCardRequest(BaseModel):
     setup_intent_id: str
-
-
-class ReferralCodeCheckOut(BaseModel):
-    code: str
-    trial_days: int
-    referrer_first_name: Optional[str]
-
-
-class ReferralSummaryOut(BaseModel):
-    code: str
-    reward_amount: float
-    friend_trial_days: int
-    joined_count: int  # friends who joined with this code
-    rewarded_count: int  # ...whose first paid month went through
-    credit_earned: float

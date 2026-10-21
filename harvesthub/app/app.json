@@ -58,7 +58,14 @@
           "enableGooglePay": true
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#2F4F3B"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

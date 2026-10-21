@@ -5,3 +5,6 @@ node_modules/
 dist/
 .claude/
 !.env.example
+# Python generated files
+__pycache__/
+*.pyc

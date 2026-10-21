@@ -30,10 +30,11 @@ export interface Membership {
 export interface MembershipOverview {
   monthly_price: number;
   plans: PlanOption[];
-  trial_days: number; // 0 once the customer has had Harvest Pass before
-  referral_trial_days: number;
+  free_days: number; // how long every new customer's free period lasts
+  free_period_ends_at: string | null;
+  free_period_active: boolean;
   free_service_fee_min_subtotal: number;
-  is_member: boolean;
+  is_member: boolean; // has the benefits right now — paid, or the free period
   membership: Membership | null;
   total_savings: number;
 }
@@ -45,7 +46,7 @@ export interface PrepareJoinResponse {
   interval_months: number;
   price_per_month: number;
   billed_amount: number;
-  trial_days: number;
+  free_until: string | null; // joining during the free period: no charge until then
   due_today: number;
   first_charge_at: string;
 }
@@ -53,19 +54,4 @@ export interface PrepareJoinResponse {
 export interface PrepareCardUpdateResponse {
   setup_intent_id: string;
   setup_intent_client_secret: string;
-}
-
-export interface ReferralCodeCheck {
-  code: string;
-  trial_days: number;
-  referrer_first_name: string | null;
-}
-
-export interface ReferralSummary {
-  code: string;
-  reward_amount: number;
-  friend_trial_days: number;
-  joined_count: number;
-  rewarded_count: number;
-  credit_earned: number;
 }

@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { TextField } from '../../components/TextField';
+import { AddressSearchField } from '../../components/AddressSearchField';
 import { TagSelector } from '../../components/TagSelector';
 import { StorePhotoCard } from '../../components/farmer/StorePhotoCard';
 import { FARM_BIO_MAX, FARM_TYPE_OPTIONS, farmerProfileEditSchema, flattenFieldErrors } from '../../lib/validation/schemas';
@@ -61,12 +62,6 @@ export default function FarmProfileScreen() {
     setErrors({});
     const d = result.data;
 
-    const addressChanged =
-      d.addressStreet !== (farmerProfile?.address_street ?? '') ||
-      d.addressCity !== (farmerProfile?.address_city ?? '') ||
-      d.addressState !== (farmerProfile?.address_state ?? '') ||
-      d.addressZip !== (farmerProfile?.address_zip ?? '');
-
     setSaving(true);
     try {
       const { error: profileError } = await supabase
@@ -86,10 +81,8 @@ export default function FarmProfileScreen() {
           address_city: d.addressCity,
           address_state: d.addressState,
           address_zip: d.addressZip,
-          // The backend only geocodes a farm while both of these are null
-          // (app/farmers/service.py::get_or_geocode_farmer) — clear them so
-          // customers' distance sorting picks up the new location.
-          ...(addressChanged ? { latitude: null, longitude: null, geocoded_at: null } : {}),
+          // A changed address clears the farm's map location by itself (a
+          // database trigger, 0031), so the API geocodes the new one.
         })
         .eq('id', userId);
       if (farmError) throw farmError;
@@ -154,7 +147,17 @@ export default function FarmProfileScreen() {
             <Text style={styles.caption}>
               Customers pick up orders here. Orders already placed keep the address they were placed with.
             </Text>
-            <TextField placeholder="Street address" value={addressStreet} onChangeText={setAddressStreet} error={errors.addressStreet} />
+            <AddressSearchField
+              value={addressStreet}
+              onChangeText={setAddressStreet}
+              onSelectAddress={(a) => {
+                setAddressStreet(a.street);
+                setAddressCity(a.city);
+                setAddressState(a.state);
+                setAddressZip(a.zip);
+              }}
+              error={errors.addressStreet}
+            />
             <TextField placeholder="City" value={addressCity} onChangeText={setAddressCity} error={errors.addressCity} />
             <View style={styles.row}>
               <View style={styles.flex1}>

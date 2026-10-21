@@ -3,7 +3,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { supabase } from '../../../lib/supabase';
+import { signOut } from '../../../lib/signOut';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiClient } from '../../../lib/apiClient';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
@@ -76,9 +76,9 @@ export default function CustomerAccount() {
           onPress={() => router.push('/(customer)/harvest-pass')}
         />
         <SettingsRow
-          icon="card-giftcard"
-          label="Refer a friend"
-          caption="Give a month, get a month"
+          icon="share"
+          label="Invite friends"
+          caption="Share HarvestHub with people you know"
           onPress={() => router.push('/(customer)/referral')}
         />
         <SettingsRow icon="help-outline" label="Help" onPress={() => router.push('/(customer)/help')} />
@@ -105,7 +105,7 @@ export default function CustomerAccount() {
           {produceLabels.length > 0 ? <ChipRow labels={produceLabels} /> : <Text style={styles.emptyText}>None set.</Text>}
         </Section>
 
-        <Pressable style={styles.logoutButton} onPress={() => supabase.auth.signOut()}>
+        <Pressable style={styles.logoutButton} onPress={() => signOut()}>
           <MaterialIcons name="logout" size={16} color={colors.danger} />
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>
@@ -117,14 +117,15 @@ export default function CustomerAccount() {
 function harvestPassCaption(pass: MembershipOverview | null): string | undefined {
   if (!pass) return undefined;
   const m = pass.membership;
+  const min = pass.free_service_fee_min_subtotal.toFixed(0);
   if (!m) {
-    return pass.trial_days > 0
-      ? `Try it free for ${pass.trial_days} days — no service fee on $${pass.free_service_fee_min_subtotal.toFixed(0)}+ orders`
-      : `No service fee on orders of $${pass.free_service_fee_min_subtotal.toFixed(0)}+`;
+    return pass.free_period_active && pass.free_period_ends_at
+      ? `Free until ${formatLongDate(pass.free_period_ends_at)} — no service fee on $${min}+ orders`
+      : `Join for no service fee on orders of $${min}+`;
   }
   if (!m.has_benefits || m.status === 'past_due') return 'Payment problem — tap to update your card';
   if (m.cancel_at_period_end && m.ends_at) return `Ends ${formatLongDate(m.ends_at)}`;
-  if (m.status === 'trialing' && m.trial_end) return `Free trial until ${formatLongDate(m.trial_end)}`;
+  if (m.status === 'trialing' && m.trial_end) return `Free month — your plan starts ${formatLongDate(m.trial_end)}`;
   return `Member · $${pass.total_savings.toFixed(2)} saved`;
 }
 
