@@ -6,6 +6,7 @@ from app.customers.service import get_current_customer
 from app.orders import service
 from app.orders.schemas import CreateOrderRequest, CreateOrderResponse, OrderOut, CancelRequest, ReorderResponse
 from app.ratings.schemas import SubmitRatingRequest
+from app.delivery.schemas import DeliveryPhotoOut
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -82,3 +83,8 @@ def rate_store(
 @router.post("/{order_id}/reorder", response_model=ReorderResponse)
 def reorder(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
     return service.reorder(db, str(customer.id), order_id)
+
+
+@router.get("/{order_id}/store/{store_order_id}/delivery-photo", response_model=DeliveryPhotoOut)
+def delivery_photo(order_id: str, store_order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return {"url": service.delivery_photo_url(db, str(customer.id), order_id, store_order_id)}

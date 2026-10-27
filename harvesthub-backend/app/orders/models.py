@@ -43,10 +43,16 @@ class StoreOrder(Base):
     # What Harvest Pass took off this farm's order (the waived service fee) — see 0028.
     member_savings = Column(Numeric(10, 2), nullable=False, default=0)
 
-    status = Column(String, nullable=False, default="pending_payment")  # + 'ready_for_pickup' — see 0025
+    # + 'ready_for_pickup' (0025), 'out_for_delivery' (0032)
+    status = Column(String, nullable=False, default="pending_payment")
     # When the farmer may see this order and the customer's name/phone:
     # card payment succeeded, or placed as cash on pickup. Null = never shown.
     released_to_farmer_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Delivery orders (0032): the window the customer chose, and the stop on
+    # that window's delivery run (set once the order is paid).
+    delivery_window_starts_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    delivery_window_ends_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    delivery_stop_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 

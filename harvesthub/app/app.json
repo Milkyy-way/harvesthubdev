@@ -65,6 +65,14 @@
           "icon": "./assets/android-icon-monochrome.png",
           "color": "#2F4F3B"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": false,
+          "cameraPermission": "HarvestHub uses the camera so farmers can take a photo of where they left a delivery.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

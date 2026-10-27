@@ -5,9 +5,10 @@ from app.products.models import Product
 from app.farmers.models import FarmerProfile
 from app.checkout.schemas import CheckoutGroupRequest
 from app.promotions.service import apply_promo
-from app.core.pricing import SERVICE_FEE_RATE, DELIVERY_FEE_FLAT, MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL
+from app.core.pricing import SERVICE_FEE_RATE, MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL
 from app.core.tax import compute_item_tax
 from app.membership.service import has_member_benefits
+from app.delivery import service as delivery_service
 
 
 def _empty_preview(is_member: bool) -> dict:
@@ -92,7 +93,14 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
 
         discount, applied_code, promo_error = apply_promo(db, group.farmer_id, group.promo_code, subtotal)
 
-        delivery_fee = DELIVERY_FEE_FLAT if group.fulfillment_method == "delivery" else 0.0
+        # Delivery: the farm's own fee (it keeps all of it), to the customer's
+        # saved address, in a window the farm still takes orders for.
+        delivery = (
+            delivery_service.check_slot(db, group.farmer_id, customer_id, group.delivery_starts_at)
+            if group.fulfillment_method == "delivery"
+            else None
+        )
+        delivery_fee = delivery.get("delivery_fee", 0.0) if delivery else 0.0
         full_service_fee = round(subtotal * SERVICE_FEE_RATE, 2)
         member_savings = full_service_fee if waive_service_fee else 0.0
         service_fee = round(full_service_fee - member_savings, 2)
@@ -133,6 +141,11 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
                 "promo_discount": discount,
                 "promo_error": promo_error,
                 "delivery_fee": delivery_fee,
+                "delivery_window_starts_at": delivery.get("starts_at") if delivery else None,
+                "delivery_window_ends_at": delivery.get("ends_at") if delivery else None,
+                "delivery_window_label": delivery.get("label") if delivery else None,
+                "delivery_address_line": delivery.get("address_line") if delivery else None,
+                "delivery_error": delivery.get("error") if delivery else None,
                 "service_fee": service_fee,
                 "member_savings": member_savings,
                 "tax": tax,

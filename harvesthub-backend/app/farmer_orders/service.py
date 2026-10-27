@@ -7,15 +7,16 @@ from app.core.pricing import FARMER_COMMISSION_RATE
 from app.orders.models import Order, StoreOrder, StoreOrderItem
 from app.orders import service as orders_service
 from app.payments.models import Payment, Refund
+from app.core.localtime import window_label
 
 # Which store order statuses each Orders-tab segment shows.
 _VIEW_STATUSES = {
     "to_prepare": ("pending_payment", "paid"),  # pending_payment only ever appears here for cash orders (released at placement)
-    "ready": ("ready_for_pickup",),
+    "ready": ("ready_for_pickup", "out_for_delivery"),  # waiting for pickup, or on today's delivery run
     "completed": ("completed",),
     "cancelled": ("cancelled",),
 }
-_ACTIVE_STATUSES = ("pending_payment", "paid", "ready_for_pickup")
+_ACTIVE_STATUSES = ("pending_payment", "paid", "ready_for_pickup", "out_for_delivery")
 
 
 def _released_orders(db: Session, farmer_id):
@@ -57,8 +58,14 @@ def _build(db: Session, rows: list) -> list[dict]:
     for so, order, payment, customer in rows:
         active = so.status in _ACTIVE_STATUSES
         is_cash = payment.payment_method == "cash_on_pickup"
-        gross = round(float(so.subtotal) - float(so.promo_discount), 2)
-        earnings = round(gross - round(gross * FARMER_COMMISSION_RATE, 2), 2) if so.status != "cancelled" else 0.0
+        goods = round(float(so.subtotal) - float(so.promo_discount), 2)
+        # The delivery fee is the farm's in full; commission is on the goods.
+        earnings = (
+            round(goods - round(goods * FARMER_COMMISSION_RATE, 2) + float(so.delivery_fee or 0), 2)
+            if so.status != "cancelled"
+            else 0.0
+        )
+        is_delivery = so.fulfillment_method == "delivery"
         cancelled_by, reason = cancellations.get(so.id, (None, None))
         results.append(
             {
@@ -70,6 +77,25 @@ def _build(db: Session, rows: list) -> list[dict]:
                 "customer_name": customer.full_name,
                 "customer_phone": customer.phone if active else None,
                 "fulfillment_method": so.fulfillment_method,
+                "delivery_window_label": (
+                    window_label(so.delivery_window_starts_at, so.delivery_window_ends_at)
+                    if is_delivery and so.delivery_window_starts_at
+                    else None
+                ),
+                "delivery_address_line": (
+                    ", ".join(
+                        p
+                        for p in (
+                            so.delivery_address_street,
+                            so.delivery_address_city,
+                            f"{so.delivery_address_state or ''} {so.delivery_address_zip or ''}".strip(),
+                        )
+                        if p
+                    )
+                    if is_delivery and active
+                    else None
+                ),
+                "delivery_fee": float(so.delivery_fee or 0),
                 "items": [
                     {
                         "product_name": i.product_name,

@@ -7,14 +7,11 @@ time-sensitive order updates — they cost money per message.
 """
 import html
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
+
+from app.core.localtime import LOCAL_TZ  # dates are shown in US Eastern
 
 PUSH, EMAIL, SMS = "push", "email", "sms"
-
-# Dates in messages are shown in US Eastern (the DC/MD/VA launch market).
-# A fixed offset, not zoneinfo — a date-only label doesn't need DST, and the
-# server image has no time zone database.
-_EASTERN = timezone(timedelta(hours=-5))
 
 
 @dataclass
@@ -41,7 +38,7 @@ def _date(value: datetime | date | str | None) -> str:
         return f"{value:%b} {value.day}"
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    local = value.astimezone(_EASTERN)
+    local = value.astimezone(LOCAL_TZ)
     return f"{local:%b} {local.day}"
 
 
@@ -78,9 +75,15 @@ def order_placed(ctx: dict) -> Message:
     paragraphs = [
         "Thanks for your order! Here's your receipt.",
         "Pay in cash when you pick up." if cash else "Paid by card.",
-        "We'll let you know as soon as each farm has your order ready for pickup.",
+        "We'll let you know as soon as each farm has your order ready.",
     ]
     for so in order["store_orders"]:
+        if so["fulfillment_method"] == "delivery" and so.get("delivery"):
+            paragraphs.append(
+                f"Delivery from {so['farm_name']}: {so['delivery']['window_label']}, to "
+                f"{so['delivery_address_street']}. We'll tell you when it's on the way."
+            )
+            continue
         address = ", ".join(
             p for p in (so["pickup_address_street"], so["pickup_address_city"], so["pickup_address_state"]) if p
         )
@@ -132,6 +135,48 @@ def order_cancelled_by_farm(ctx: dict) -> Message:
             refund_line + (" It can take 5–10 business days to appear." if refund else ""),
         ],
         sms=_sms(f"{farm} cancelled your order. {refund_line}"),
+    )
+
+
+def out_for_delivery(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, stops_before (deliveries ahead of this one)."""
+    farm, ahead = ctx["farm_name"], ctx.get("stops_before") or 0
+    ahead_text = f"{ahead} stop{'s' if ahead != 1 else ''} before yours"
+    return Message(
+        title="Your order is on the way",
+        body=f"{farm} is out delivering — {ahead_text}.",
+        channels=(PUSH, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        sms=_sms(f"{farm} is out delivering your order — {ahead_text}."),
+    )
+
+
+def delivery_next(ctx: dict) -> Message:
+    """ctx: farm_name, order_id."""
+    farm = ctx["farm_name"]
+    return Message(
+        title="You're next!",
+        body=f"{farm} is heading to you now.",
+        channels=(PUSH, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        sms=_sms(f"You're next! {farm} is heading to you now with your order."),
+    )
+
+
+def delivered(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, has_photo, note."""
+    farm = ctx["farm_name"]
+    photo = " There's a photo of where it was left in the app." if ctx.get("has_photo") else ""
+    note = f" Note from the farm: {ctx['note']}" if ctx.get("note") else ""
+    return Message(
+        title="Your order was delivered",
+        body=f"{farm} delivered your order.{photo}",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"{farm} delivered your order.{photo}{note}",
+            "Something not right? Open the order in the app to let us know.",
+        ],
     )
 
 
@@ -196,9 +241,11 @@ def membership_payment_failed(ctx: dict) -> Message:
 
 
 def new_order(ctx: dict) -> Message:
-    """ctx: item_count, total, cash (bool)."""
+    """ctx: item_count, total, cash (bool), delivery_label (delivery orders)."""
     summary = f"{_items(ctx['item_count'])} · {_money(ctx['total'])}"
     paid = " (cash at pickup)" if ctx.get("cash") else ""
+    if ctx.get("delivery_label"):
+        paid = f" · deliver {ctx['delivery_label']}"
     return Message(
         title="New order",
         body=f"{summary}{paid}. Pack it and mark it ready in the app.",
@@ -206,8 +253,12 @@ def new_order(ctx: dict) -> Message:
         url="/(farmer)/(tabs)/orders",
         email_paragraphs=[
             f"You have a new order: {summary}{paid}.",
-            "Open the HarvestHub app to see the items and the customer's details, then tap “Mark ready” "
-            "once it's packed so they know to come by.",
+            (
+                "It joins that window's delivery run — you'll find it under Deliveries in the app."
+                if ctx.get("delivery_label")
+                else "Open the HarvestHub app to see the items and the customer's details, then tap “Mark ready” "
+                "once it's packed so they know to come by."
+            ),
         ],
         sms=_sms(f"New order — {summary}{paid}. Open the app to pack it."),
     )
@@ -278,6 +329,9 @@ BUILDERS = {
     "free_period_ending": free_period_ending,
     "free_period_ended": free_period_ended,
     "membership_payment_failed": membership_payment_failed,
+    "out_for_delivery": out_for_delivery,
+    "delivery_next": delivery_next,
+    "delivered": delivered,
     "new_order": new_order,
     "order_cancelled_by_customer": order_cancelled_by_customer,
     "farmer_approved": farmer_approved,

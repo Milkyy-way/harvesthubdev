@@ -1,25 +1,23 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
-import type { DeliveryAddressDraft, FarmFulfillment, FulfillmentMethod } from '../types/checkout';
+import type { FarmFulfillment, FulfillmentMethod } from '../types/checkout';
 
-const EMPTY_ADDRESS: DeliveryAddressDraft = { street: '', city: '', state: '', zip: '' };
-// Delivery has no button to pick it anymore (see FulfillmentSelector.tsx),
-// so every farm defaults straight to 'pickup' — nothing left to tap before
-// checkout is ready. The 'delivery' value stays real and functional
-// end to end for whenever the button comes back.
-const EMPTY_FULFILLMENT: FarmFulfillment = { method: 'pickup', deliveryAddress: EMPTY_ADDRESS };
+// Every farm starts on pickup — nothing to tap before checkout is ready.
+// Delivery (farms that offer it, to the customer's saved address) needs a
+// window chosen too.
+const PICKUP: FarmFulfillment = { method: 'pickup', deliverySlot: null };
 
 type CheckoutDraftContextType = {
   fulfillmentByFarm: Record<string, FarmFulfillment>;
-  ensureFarm: (farmerId: string, defaultAddress: DeliveryAddressDraft) => void;
+  ensureFarm: (farmerId: string) => void;
   setMethod: (farmerId: string, method: FulfillmentMethod) => void;
-  setDeliveryField: (farmerId: string, field: keyof DeliveryAddressDraft, value: string) => void;
+  setDeliverySlot: (farmerId: string, startsAt: string | null) => void;
 };
 
 const CheckoutDraftContext = createContext<CheckoutDraftContextType>({
   fulfillmentByFarm: {},
   ensureFarm: () => {},
   setMethod: () => {},
-  setDeliveryField: () => {},
+  setDeliverySlot: () => {},
 });
 
 // Session-local, in-memory only — this is a draft of "how will each
@@ -30,32 +28,20 @@ const CheckoutDraftContext = createContext<CheckoutDraftContextType>({
 export function CheckoutDraftProvider({ children }: { children: React.ReactNode }) {
   const [fulfillmentByFarm, setFulfillmentByFarm] = useState<Record<string, FarmFulfillment>>({});
 
-  const ensureFarm = useCallback((farmerId: string, defaultAddress: DeliveryAddressDraft) => {
-    setFulfillmentByFarm((prev) => {
-      if (prev[farmerId]) return prev;
-      return { ...prev, [farmerId]: { method: 'pickup', deliveryAddress: defaultAddress } };
-    });
+  const ensureFarm = useCallback((farmerId: string) => {
+    setFulfillmentByFarm((prev) => (prev[farmerId] ? prev : { ...prev, [farmerId]: PICKUP }));
   }, []);
 
   const setMethod = useCallback((farmerId: string, method: FulfillmentMethod) => {
-    setFulfillmentByFarm((prev) => ({
-      ...prev,
-      [farmerId]: { ...(prev[farmerId] ?? EMPTY_FULFILLMENT), method },
-    }));
+    setFulfillmentByFarm((prev) => ({ ...prev, [farmerId]: { ...(prev[farmerId] ?? PICKUP), method } }));
   }, []);
 
-  const setDeliveryField = useCallback((farmerId: string, field: keyof DeliveryAddressDraft, value: string) => {
-    setFulfillmentByFarm((prev) => {
-      const existing = prev[farmerId] ?? EMPTY_FULFILLMENT;
-      return {
-        ...prev,
-        [farmerId]: { ...existing, deliveryAddress: { ...existing.deliveryAddress, [field]: value } },
-      };
-    });
+  const setDeliverySlot = useCallback((farmerId: string, startsAt: string | null) => {
+    setFulfillmentByFarm((prev) => ({ ...prev, [farmerId]: { ...(prev[farmerId] ?? PICKUP), deliverySlot: startsAt } }));
   }, []);
 
   return (
-    <CheckoutDraftContext.Provider value={{ fulfillmentByFarm, ensureFarm, setMethod, setDeliveryField }}>
+    <CheckoutDraftContext.Provider value={{ fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot }}>
       {children}
     </CheckoutDraftContext.Provider>
   );

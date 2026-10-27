@@ -8,6 +8,9 @@ class CheckoutGroupRequest(BaseModel):
     farmer_id: str
     fulfillment_method: FulfillmentMethod
     promo_code: Optional[str] = None
+    # Delivery: the chosen window's start, exactly as GET /delivery/options
+    # returned it (slots[].starts_at).
+    delivery_starts_at: Optional[str] = None
 
 
 class CheckoutPreviewRequest(BaseModel):
@@ -43,6 +46,12 @@ class CheckoutGroupOut(BaseModel):
     promo_discount: float
     promo_error: Optional[str]
     delivery_fee: float
+    # Delivery only: the window, where it goes (the customer's saved
+    # address), or why it can't be delivered — the order can't be placed
+    # while delivery_error is set.
+    delivery_window_label: Optional[str] = None
+    delivery_address_line: Optional[str] = None
+    delivery_error: Optional[str] = None
     service_fee: float
     member_savings: float  # service fee Harvest Pass waived for this farm
     tax: float

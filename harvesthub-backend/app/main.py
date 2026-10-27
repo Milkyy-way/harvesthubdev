@@ -19,6 +19,8 @@ from app.membership.router import router as membership_router
 from app.notifications.router import router as notifications_router
 from app.addresses.router import router as addresses_router
 from app.jobs.router import router as jobs_router
+from app.delivery.router import customer_router as delivery_router
+from app.delivery.router import farmer_router as farmer_delivery_router
 
 # The interactive docs list every endpoint — handy in development, not
 # something to publish in production.
@@ -55,6 +57,8 @@ app.include_router(membership_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(addresses_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
+app.include_router(delivery_router, prefix="/api/v1")
+app.include_router(farmer_delivery_router, prefix="/api/v1")
 app.include_router(legal_router)
 
 @app.get("/health")

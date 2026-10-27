@@ -1,5 +1,6 @@
 // Matches the FastAPI backend's order schemas
 // (harvesthub-backend/app/orders/schemas.py).
+import type { DeliveryProgress } from './delivery';
 
 export type FulfillmentMethod = 'pickup' | 'delivery';
 // 'card' covers everything the native Stripe PaymentSheet offers (manually
@@ -7,9 +8,16 @@ export type FulfillmentMethod = 'pickup' | 'delivery';
 // show based on device capability, the app doesn't distinguish which.
 export type OrderPaymentMethod = 'card' | 'cash_on_pickup';
 
-// card: pending_payment -> paid -> ready_for_pickup -> completed
-// cash: pending_payment ---------> ready_for_pickup -> completed
-export type StoreOrderStatus = 'pending_payment' | 'paid' | 'ready_for_pickup' | 'completed' | 'cancelled';
+// card pickup:   pending_payment -> paid -> ready_for_pickup -> completed
+// cash pickup:   pending_payment ---------> ready_for_pickup -> completed
+// card delivery: pending_payment -> paid -> out_for_delivery -> completed
+export type StoreOrderStatus =
+  | 'pending_payment'
+  | 'paid'
+  | 'ready_for_pickup'
+  | 'out_for_delivery'
+  | 'completed'
+  | 'cancelled';
 export type OrderStatus = 'active' | 'completed' | 'cancelled';
 
 export interface OrderLineItem {
@@ -49,6 +57,7 @@ export interface StoreOrder {
   cancellation_reason: string | null;
   items: OrderLineItem[];
   my_rating: number | null;
+  delivery: DeliveryProgress | null; // delivery orders only
 }
 
 export interface OrderPayment {
@@ -69,18 +78,13 @@ export interface Order {
   payment: OrderPayment | null;
 }
 
-export interface DeliveryAddressIn {
-  street: string;
-  city: string;
-  state: string;
-  zip: string;
-}
-
 export interface CreateOrderGroup {
   farmer_id: string;
   fulfillment_method: FulfillmentMethod;
-  delivery_address?: DeliveryAddressIn | null;
   promo_code?: string | null;
+  // Delivery: the chosen window (DeliverySlot.starts_at). It goes to the
+  // customer's saved address.
+  delivery_starts_at?: string | null;
 }
 
 export interface CreateOrderRequest {

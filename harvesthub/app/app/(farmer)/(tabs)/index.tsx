@@ -10,13 +10,16 @@ import { HeroShell } from '../../../components/customer/HeroShell';
 import { VerificationStatusCard } from '../../../components/farmer/VerificationStatusCard';
 import { StorePhotoCard } from '../../../components/farmer/StorePhotoCard';
 import { EarningsCard } from '../../../components/farmer/EarningsCard';
+import { DeliveriesCard } from '../../../components/farmer/DeliveriesCard';
 import type { FarmerEarnings } from '../../../types/farmer';
+import type { RunsResponse } from '../../../types/delivery';
 
 export default function FarmerHome() {
   const { profile, farmerProfile, farmerVerification, refreshProfile } = useAuth();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [earnings, setEarnings] = useState<FarmerEarnings | null>(null);
+  const [runs, setRuns] = useState<RunsResponse | null>(null);
 
   const firstName = profile?.full_name?.trim().split(' ')[0];
   const farmName = farmerProfile?.farm_name ?? 'your farm';
@@ -25,10 +28,14 @@ export default function FarmerHome() {
 
   const loadEarnings = useCallback(async () => {
     try {
-      const res = await apiClient.get<FarmerEarnings>('/farmers/me/earnings');
-      setEarnings(res.data);
+      const [earningsRes, runsRes] = await Promise.all([
+        apiClient.get<FarmerEarnings>('/farmers/me/earnings'),
+        apiClient.get<RunsResponse>('/farmers/me/delivery/runs'),
+      ]);
+      setEarnings(earningsRes.data);
+      setRuns(runsRes.data);
     } catch (err) {
-      console.warn('Could not load earnings:', err);
+      console.warn('Could not load earnings or deliveries:', err);
     }
   }, []);
 
@@ -91,6 +98,7 @@ export default function FarmerHome() {
         {approved ? (
           <>
             <EarningsCard earnings={earnings} onPress={() => router.push('/(farmer)/earnings')} />
+            <DeliveriesCard runs={runs} onPress={() => router.push('/(farmer)/deliveries')} />
             <StorePhotoCard />
           </>
         ) : null}

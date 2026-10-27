@@ -3,11 +3,10 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { openDirections } from '../../lib/maps';
 import { TextField } from '../TextField';
-import type { CheckoutGroup, DeliveryAddressDraft } from '../../types/checkout';
+import type { CheckoutGroup } from '../../types/checkout';
 
 type Props = {
   group: CheckoutGroup;
-  deliveryAddress: DeliveryAddressDraft | null;
   promoCodeInput: string;
   onChangePromoCodeInput: (value: string) => void;
   onApplyPromo: () => void;
@@ -16,7 +15,6 @@ type Props = {
 
 export function CheckoutFarmSection({
   group,
-  deliveryAddress,
   promoCodeInput,
   onChangePromoCodeInput,
   onApplyPromo,
@@ -25,9 +23,6 @@ export function CheckoutFarmSection({
   const pickupAddressLine = [group.address_street, group.address_city, group.address_state, group.address_zip]
     .filter(Boolean)
     .join(', ');
-  const deliveryAddressLine = deliveryAddress
-    ? [deliveryAddress.street, deliveryAddress.city, deliveryAddress.state, deliveryAddress.zip].filter(Boolean).join(', ')
-    : '';
 
   const handleDirections = () => {
     if (group.latitude !== null && group.longitude !== null) {
@@ -48,7 +43,7 @@ export function CheckoutFarmSection({
         <Text style={styles.fulfillmentText} numberOfLines={2}>
           {group.fulfillment_method === 'pickup'
             ? `Pickup at ${pickupAddressLine || group.farm_name}`
-            : `Delivery to ${deliveryAddressLine || 'your address'}`}
+            : `Delivery ${group.delivery_window_label ?? ''} to ${group.delivery_address_line || 'your address'}`}
         </Text>
         {group.fulfillment_method === 'pickup' && group.latitude !== null ? (
           <Pressable onPress={handleDirections} hitSlop={8}>
@@ -56,6 +51,13 @@ export function CheckoutFarmSection({
           </Pressable>
         ) : null}
       </View>
+
+      {group.delivery_error ? (
+        <View style={styles.deliveryError}>
+          <MaterialIcons name="error-outline" size={16} color={colors.danger} />
+          <Text style={styles.deliveryErrorText}>{group.delivery_error} Go back to your cart to choose again.</Text>
+        </View>
+      ) : null}
 
       <View style={styles.items}>
         {group.items.map((item) => (
@@ -150,6 +152,16 @@ const styles = StyleSheet.create({
   fulfillmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
   fulfillmentText: { flex: 1, fontSize: 12.5, color: colors.textMuted },
   directionsLink: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
+  deliveryError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: '#F6E7E5',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  deliveryErrorText: { flex: 1, fontSize: 12.5, color: colors.danger },
   items: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: spacing.xs },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
   itemName: { flex: 1, fontSize: 13, color: colors.text, marginRight: spacing.sm },

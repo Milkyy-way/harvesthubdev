@@ -7,7 +7,8 @@ import { openDirections } from '../../lib/maps';
 import { CartLineItemRow } from './CartLineItemRow';
 import { FulfillmentSelector } from './FulfillmentSelector';
 import type { CartFarmGroup } from '../../types/database';
-import type { DeliveryAddressDraft, FulfillmentMethod } from '../../types/checkout';
+import type { FulfillmentMethod } from '../../types/checkout';
+import type { FarmDeliveryOption } from '../../types/delivery';
 
 type Props = {
   group: CartFarmGroup;
@@ -17,8 +18,9 @@ type Props = {
   onRemove: (productId: string) => void;
   method: FulfillmentMethod | null;
   onSelectMethod: (method: FulfillmentMethod) => void;
-  deliveryAddress: DeliveryAddressDraft;
-  onChangeDeliveryAddress: (field: keyof DeliveryAddressDraft, value: string) => void;
+  delivery: FarmDeliveryOption | null;
+  deliverySlot: string | null;
+  onSelectDeliverySlot: (startsAt: string) => void;
   readyToPlaceSeparately: boolean;
   onPlaceOrderSeparately: () => void;
 };
@@ -31,8 +33,9 @@ export function CartFarmSection({
   onRemove,
   method,
   onSelectMethod,
-  deliveryAddress,
-  onChangeDeliveryAddress,
+  delivery,
+  deliverySlot,
+  onSelectDeliverySlot,
   readyToPlaceSeparately,
   onPlaceOrderSeparately,
 }: Props) {
@@ -92,8 +95,9 @@ export function CartFarmSection({
         onSelectMethod={onSelectMethod}
         pickupAddressLine={pickupAddressLine}
         onPressDirections={handleDirections}
-        deliveryAddress={deliveryAddress}
-        onChangeDeliveryAddress={onChangeDeliveryAddress}
+        delivery={delivery}
+        deliverySlot={deliverySlot}
+        onSelectDeliverySlot={onSelectDeliverySlot}
       />
 
       {readyToPlaceSeparately ? (

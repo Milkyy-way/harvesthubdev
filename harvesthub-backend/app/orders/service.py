@@ -21,13 +21,17 @@ from app.ratings import service as ratings_service
 from app.ratings.schemas import SubmitRatingRequest
 from app.cart.service import _cart_totals
 from app.notifications.service import Notice, notify, notify_many
+from app.delivery import service as delivery_service
+from app.customers.models import CustomerProfile
 
 # Terminal from the customer's point of view — no further payment action
 # will change these without a new attempt (we don't build retries yet).
 _TERMINAL_PAYMENT_STATUSES = ("succeeded", "canceled", "failed")
-# Store order lifecycle (see 0025):
-#   card: pending_payment -> paid -> ready_for_pickup -> completed
-#   cash: pending_payment ---------> ready_for_pickup -> completed
+# Store order lifecycle (see 0025, 0032):
+#   card pickup:   pending_payment -> paid -> ready_for_pickup -> completed
+#   cash pickup:   pending_payment ---------> ready_for_pickup -> completed
+#   card delivery: pending_payment -> paid -> out_for_delivery -> completed
+# (delivery is card only; the farmer's run moves it along — app/delivery/)
 # 'completed' is cancellable/refundable too (e.g. a quality complaint after
 # pickup) — this is what makes the farmer-payout ledger's refund-before/
 # after-payout branch reachable at all, since a ledger entry is only ever
@@ -37,9 +41,13 @@ _CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_picku
 # Statuses whose cancellation needs a refund (a no-op for cash, which never
 # captured money online) + a farmer ledger adjustment, and whose stock has
 # definitely been taken — as opposed to 'pending_payment'.
-_REFUNDABLE_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "completed")
-# What a farmer can still cancel: anything not yet handed over.
-_FARMER_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_pickup")
+_REFUNDABLE_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "out_for_delivery", "completed")
+# What a farmer can still cancel: anything not yet handed over — including a
+# delivery they couldn't make ("Couldn't deliver").
+_FARMER_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_pickup", "out_for_delivery")
+# Customers can't cancel a delivery that's already on its way (it isn't in
+# _CANCELLABLE_STORE_ORDER_STATUSES); they're told why.
+_ON_ITS_WAY = "This order is already on its way, so it can't be cancelled now."
 
 
 def get_owned_order(db: Session, customer_id: str, order_id: str) -> Order:
@@ -124,6 +132,7 @@ def build_order_out(db: Session, order_id) -> dict:
                 "status": so.status,
                 "cancelled_by": cancelled_by if so.status == "cancelled" else None,
                 "cancellation_reason": cancellation_reason if so.status == "cancelled" else None,
+                "delivery": delivery_service.progress_for(db, so),
                 "items": [
                     {
                         "product_id": str(i.product_id) if i.product_id else None,
@@ -244,7 +253,16 @@ def _notify_order_placed(db: Session, order_id) -> None:
             Notice(
                 so.farmer_id,
                 "new_order",
-                {"item_count": _item_count(db, so.id), "total": float(so.subtotal), "cash": _is_cash(payment)},
+                {
+                    "item_count": _item_count(db, so.id),
+                    "total": float(so.subtotal),
+                    "cash": _is_cash(payment),
+                    "delivery_label": (
+                        delivery_service.window_label(so.delivery_window_starts_at, so.delivery_window_ends_at)
+                        if so.fulfillment_method == "delivery" and so.delivery_window_starts_at
+                        else None
+                    ),
+                },
                 f"new_order:{so.id}",
             )
         )
@@ -273,7 +291,12 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
     customer_id = str(customer.id)
 
     preview_groups = [
-        CheckoutGroupRequest(farmer_id=g.farmer_id, fulfillment_method=g.fulfillment_method, promo_code=g.promo_code)
+        CheckoutGroupRequest(
+            farmer_id=g.farmer_id,
+            fulfillment_method=g.fulfillment_method,
+            promo_code=g.promo_code,
+            delivery_starts_at=g.delivery_starts_at,
+        )
         for g in request.groups
     ]
     preview = build_checkout_preview(db, customer_id, preview_groups)
@@ -282,13 +305,16 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
 
     _validate_stock(db, preview["groups"])
 
-    delivery_by_farmer = {g.farmer_id: g.delivery_address for g in request.groups}
-    for group in preview["groups"]:
-        if group["fulfillment_method"] == "delivery" and not delivery_by_farmer.get(group["farmer_id"]):
+    deliveries = [g for g in preview["groups"] if g["fulfillment_method"] == "delivery"]
+    if deliveries and request.payment_method != "card":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delivery orders are paid by card.")
+    for group in deliveries:
+        if group["delivery_error"]:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Delivery address required for {group['farm_name']}",
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"{group['farm_name']}: {group['delivery_error']}"
             )
+    # Deliveries go to the customer's saved (and geocoded) address.
+    home = db.get(CustomerProfile, customer.id) if deliveries else None
 
     order = Order(id=uuid.uuid4(), customer_id=customer.id)
     db.add(order)
@@ -301,7 +327,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
     released_at = datetime.now(timezone.utc) if request.payment_method == "cash_on_pickup" else None
 
     for group in preview["groups"]:
-        delivery = delivery_by_farmer.get(group["farmer_id"])
+        delivery = home if group["fulfillment_method"] == "delivery" else None
         store_order = StoreOrder(
             id=uuid.uuid4(),
             order_id=order.id,
@@ -312,10 +338,12 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             pickup_address_city=group["address_city"],
             pickup_address_state=group["address_state"],
             pickup_address_zip=group["address_zip"],
-            delivery_address_street=delivery.street if delivery else None,
-            delivery_address_city=delivery.city if delivery else None,
-            delivery_address_state=delivery.state if delivery else None,
-            delivery_address_zip=delivery.zip if delivery else None,
+            delivery_address_street=delivery.address_street if delivery else None,
+            delivery_address_city=delivery.address_city if delivery else None,
+            delivery_address_state=delivery.address_state if delivery else None,
+            delivery_address_zip=delivery.address_zip if delivery else None,
+            delivery_window_starts_at=group["delivery_window_starts_at"],
+            delivery_window_ends_at=group["delivery_window_ends_at"],
             subtotal=group["subtotal"],
             promo_code=group["promo_code"],
             promo_discount=group["promo_discount"],
@@ -389,6 +417,10 @@ def _finalize_successful_payment(db: Session, order_id) -> None:
     db.query(StoreOrder).filter(StoreOrder.order_id == order_id, StoreOrder.status == "pending_payment").update(
         {"status": "paid", "released_to_farmer_at": datetime.now(timezone.utc)}
     )
+    # Delivery orders become stops on their window's run.
+    for so in db.query(StoreOrder).filter(StoreOrder.order_id == order_id, StoreOrder.fulfillment_method == "delivery"):
+        if so.status in ("paid", "out_for_delivery"):
+            delivery_service.attach_to_run(db, so, order.customer_id)
     db.commit()
     _notify_order_placed(db, order_id)
 
@@ -526,6 +558,8 @@ def cancel_store_order(
     store_order = db.query(StoreOrder).filter(StoreOrder.id == store_order_id, StoreOrder.order_id == order.id).first()
     if not store_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
+    if store_order.status == "out_for_delivery":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY)
     if store_order.status not in _CANCELLABLE_STORE_ORDER_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -533,6 +567,7 @@ def cancel_store_order(
         )
 
     _cancel_one_store_order(db, order, store_order, cancelled_by, cancelled_by_role, reason)
+    delivery_service.release_stop(db, store_order)
     db.commit()
     _notify_farms_of_customer_cancellation(db, [store_order])
     return build_order_out(db, order.id)
@@ -598,7 +633,14 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
         .all()
     )
     if not store_orders:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Nothing left to cancel on this order")
+        on_its_way = (
+            db.query(StoreOrder.id)
+            .filter(StoreOrder.order_id == order.id, StoreOrder.status == "out_for_delivery")
+            .first()
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY if on_its_way else "Nothing left to cancel on this order"
+        )
 
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
     refundable = [so for so in store_orders if so.status in _REFUNDABLE_STORE_ORDER_STATUSES]
@@ -626,9 +668,20 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
             db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
 
     _sync_cash_payment_status(db, order.id, payment)
+    for so in store_orders:
+        delivery_service.release_stop(db, so)
     db.commit()
     _notify_farms_of_customer_cancellation(db, store_orders)
     return build_order_out(db, order.id)
+
+
+def delivery_photo_url(db: Session, customer_id: str, order_id: str, store_order_id: str) -> str | None:
+    """The proof-of-delivery photo for one of the customer's own orders."""
+    order = get_owned_order(db, customer_id, order_id)
+    store_order = db.query(StoreOrder).filter(StoreOrder.id == store_order_id, StoreOrder.order_id == order.id).first()
+    if not store_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
+    return delivery_service.photo_url(db, store_order)
 
 
 def mark_store_order_completed(db: Session, customer_id: str, order_id: str, store_order_id: str) -> dict:
@@ -683,6 +736,11 @@ def mark_store_order_ready_for_pickup(db: Session, farmer_id, store_order_id: st
     cash orders pending_payment -> ready_for_pickup (they're paid at pickup).
     The customer's "Mark as Received" unlocks from here."""
     store_order = get_farmer_store_order(db, farmer_id, store_order_id)
+    if store_order.fulfillment_method == "delivery":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Delivery orders go out with their delivery run — see Deliveries.",
+        )
     payment = db.query(Payment).filter(Payment.order_id == store_order.order_id).first()
     is_cash = payment is not None and payment.payment_method == "cash_on_pickup"
     preparable_status = "pending_payment" if is_cash else "paid"
@@ -727,7 +785,9 @@ def farmer_cancel_store_order(db: Session, farmer_id, store_order_id: str, reaso
     refunded_to_card = _cancel_one_store_order(db, order, store_order, farmer_id, "farmer", reason)
     if refunded_to_card:
         payouts_service.create_cancellation_fee_entry(db, store_order)
+    run = delivery_service.release_stop(db, store_order)
     db.commit()
+    delivery_service.notify_after_release(db, run)
     notify(
         db,
         order.customer_id,
@@ -814,7 +874,7 @@ def reorder(db: Session, customer_id: str, order_id: str) -> dict:
 # store_order was refunded (or never captured), so it contributes nothing
 # to spending/savings/insights even if the parent order also has paid
 # siblings.
-_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "completed")
+_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "out_for_delivery", "completed")
 
 
 # Rolling windows, not calendar-based (no "this month" edge cases to

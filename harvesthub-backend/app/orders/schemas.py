@@ -1,4 +1,6 @@
 from pydantic import BaseModel
+
+from app.delivery.schemas import DeliveryProgressOut
 from typing import Literal, Optional
 
 FulfillmentMethod = Literal["pickup", "delivery"]
@@ -8,18 +10,13 @@ FulfillmentMethod = Literal["pickup", "delivery"]
 PaymentMethod = Literal["card", "cash_on_pickup"]
 
 
-class DeliveryAddressIn(BaseModel):
-    street: str
-    city: str
-    state: str
-    zip: str
-
-
 class CreateOrderGroup(BaseModel):
     farmer_id: str
     fulfillment_method: FulfillmentMethod
-    delivery_address: Optional[DeliveryAddressIn] = None
     promo_code: Optional[str] = None
+    # Delivery: the chosen window (GET /delivery/options slots[].starts_at).
+    # It goes to the customer's saved address — never one sent here.
+    delivery_starts_at: Optional[str] = None
 
 
 class CreateOrderRequest(BaseModel):
@@ -59,11 +56,12 @@ class StoreOrderOut(BaseModel):
     tax: float
     total: float
     refunded_amount: float
-    status: Literal["pending_payment", "paid", "ready_for_pickup", "completed", "cancelled"]
+    status: Literal["pending_payment", "paid", "ready_for_pickup", "out_for_delivery", "completed", "cancelled"]
     cancelled_by: Optional[Literal["customer", "farmer", "admin"]]
     cancellation_reason: Optional[str]
     items: list[OrderItemOut]
     my_rating: Optional[int]
+    delivery: Optional[DeliveryProgressOut] = None  # delivery orders only
 
 
 class PaymentOut(BaseModel):

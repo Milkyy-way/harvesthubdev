@@ -17,3 +17,14 @@ export function openDirections(lat: number, lng: number, label?: string) {
     Linking.openURL(webUrl);
   });
 }
+
+// Turn-by-turn driving directions to a delivery stop, in Google Maps (the
+// app if installed, else the website). Uses the coordinates when the API has
+// them, the address otherwise.
+export function openDrivingDirections(destination: { latitude: number | null; longitude: number | null; address: string }) {
+  const target =
+    destination.latitude !== null && destination.longitude !== null
+      ? `${destination.latitude},${destination.longitude}`
+      : encodeURIComponent(destination.address);
+  Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${target}&travelmode=driving`);
+}

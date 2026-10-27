@@ -77,6 +77,12 @@ export default function FarmerAccount() {
               onPress={() => router.push('/(farmer)/farm-profile')}
             />
             <SettingsRow icon="star-outline" label="Ratings" caption={ratingsCaption} onPress={() => router.push('/(farmer)/ratings')} />
+            <SettingsRow
+              icon="local-shipping"
+              label="Delivery settings"
+              caption="Fee, distance and delivery times"
+              onPress={() => router.push('/(farmer)/delivery-settings')}
+            />
           </>
         ) : null}
         <SettingsRow

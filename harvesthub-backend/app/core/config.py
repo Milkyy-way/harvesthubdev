@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     SUPPORT_EMAIL: str = "support@harvesthubmarket.com"
     LEGAL_EFFECTIVE_DATE: str = "October 5, 2026"
 
+    # Where the shared app link (/app) sends people. IOS_APP_URL stays unset
+    # until the iPhone app is in the App Store; until then iPhones get a page
+    # that says it's coming.
+    ANDROID_APP_URL: str = "https://play.google.com/store/apps/details?id=com.harvesthubmarket.app"
+    IOS_APP_URL: str | None = None
+
     class Config:
         env_file = ".env"
 

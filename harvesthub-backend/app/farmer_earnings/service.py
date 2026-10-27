@@ -11,7 +11,7 @@ from app.payouts.models import LedgerEntry, Payout
 from app.payouts.service import pay_period_for
 
 _PAYOUT_HISTORY_LIMIT = 26  # about six months of weekly payouts
-_IN_PROGRESS_STATUSES = ("pending_payment", "paid", "ready_for_pickup")
+_IN_PROGRESS_STATUSES = ("pending_payment", "paid", "ready_for_pickup", "out_for_delivery")
 
 
 def _money(value) -> float:
@@ -116,7 +116,7 @@ def get_farmer_earnings(db: Session, farmer_id) -> dict:
     # Orders released to the farmer but not picked up yet — they reach the
     # ledger only at completion, so this is an estimate.
     in_progress = (
-        db.query(StoreOrder.subtotal, StoreOrder.promo_discount)
+        db.query(StoreOrder.subtotal, StoreOrder.promo_discount, StoreOrder.delivery_fee)
         .filter(
             StoreOrder.farmer_id == farmer_id,
             StoreOrder.released_to_farmer_at.isnot(None),
@@ -125,9 +125,9 @@ def get_farmer_earnings(db: Session, farmer_id) -> dict:
         .all()
     )
     estimated = 0.0
-    for subtotal, promo in in_progress:
-        gross = round(float(subtotal) - float(promo), 2)
-        estimated += gross - round(gross * FARMER_COMMISSION_RATE, 2)
+    for subtotal, promo, delivery_fee in in_progress:
+        goods = round(float(subtotal) - float(promo), 2)
+        estimated += goods - round(goods * FARMER_COMMISSION_RATE, 2) + float(delivery_fee or 0)
 
     payouts = (
         db.query(Payout)

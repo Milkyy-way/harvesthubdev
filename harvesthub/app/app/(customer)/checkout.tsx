@@ -36,6 +36,8 @@ export default function CheckoutScreen() {
   const [applyingPromoFor, setApplyingPromoFor] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<OrderPaymentMethod | null>(null);
   const [placingOrder, setPlacingOrder] = useState(false);
+  const deliveryProblem = preview?.groups.find((g) => g.delivery_error)?.delivery_error ?? null;
+  const canPlaceOrder = Boolean(paymentMethod) && !placingOrder && !deliveryProblem;
 
   const loadPreview = useCallback(
     (promoOverrides: Record<string, string> = appliedPromoCodes) => {
@@ -50,6 +52,7 @@ export default function CheckoutScreen() {
             farmer_id: farmerId,
             fulfillment_method: fulfillmentByFarm[farmerId]?.method ?? 'pickup',
             promo_code: promoOverrides[farmerId] ?? null,
+            delivery_starts_at: fulfillmentByFarm[farmerId]?.deliverySlot ?? null,
           })),
         })
         .then((res) => {
@@ -111,7 +114,7 @@ export default function CheckoutScreen() {
       return {
         farmer_id: farmerId,
         fulfillment_method: fulfillment?.method ?? 'pickup',
-        delivery_address: fulfillment?.method === 'delivery' ? fulfillment.deliveryAddress : null,
+        delivery_starts_at: fulfillment?.method === 'delivery' ? fulfillment.deliverySlot : null,
         promo_code: appliedPromoCodes[farmerId] ?? null,
       };
     }),
@@ -192,9 +195,6 @@ export default function CheckoutScreen() {
             <CheckoutFarmSection
               key={group.farmer_id}
               group={group}
-              deliveryAddress={
-                group.fulfillment_method === 'delivery' ? fulfillmentByFarm[group.farmer_id]?.deliveryAddress ?? null : null
-              }
               promoCodeInput={promoInputs[group.farmer_id] ?? ''}
               onChangePromoCodeInput={(value) => setPromoInputs((prev) => ({ ...prev, [group.farmer_id]: value }))}
               onApplyPromo={() => handleApplyPromo(group.farmer_id)}
@@ -214,7 +214,8 @@ export default function CheckoutScreen() {
               selected={paymentMethod === 'card'}
               onPress={() => setPaymentMethod('card')}
             />
-            {preview.groups.some((g) => g.fulfillment_method === 'pickup') ? (
+            {/* Delivery orders are paid by card — cash only when everything is a pickup. */}
+            {preview.groups.every((g) => g.fulfillment_method === 'pickup') ? (
               <PaymentOption
                 icon="payments"
                 label="Cash on Pickup"
@@ -236,14 +237,16 @@ export default function CheckoutScreen() {
           </View>
           <ContactSharingNotice farmNames={preview.groups.map((g) => g.farm_name)} paymentMethod={paymentMethod} />
           <Pressable
-            style={[styles.placeOrderButton, (!paymentMethod || placingOrder) && styles.placeOrderButtonDisabled]}
+            style={[styles.placeOrderButton, !canPlaceOrder && styles.placeOrderButtonDisabled]}
             onPress={handlePlaceOrder}
-            disabled={!paymentMethod || placingOrder}
+            disabled={!canPlaceOrder}
           >
             {placingOrder ? (
               <ActivityIndicator size="small" color={colors.white} />
             ) : (
-              <Text style={styles.placeOrderText}>{paymentMethod ? 'Place Order' : 'Select a payment method'}</Text>
+              <Text style={styles.placeOrderText}>
+                {deliveryProblem ? 'Fix the delivery above' : paymentMethod ? 'Place Order' : 'Select a payment method'}
+              </Text>
             )}
           </Pressable>
         </View>
@@ -271,8 +274,8 @@ function ContactSharingNotice({ farmNames, paymentMethod }: { farmNames: string[
     <View style={styles.notice}>
       <MaterialIcons name="privacy-tip" size={16} color={colors.textMuted} />
       <Text style={styles.noticeText}>
-        {farms} will receive your <Text style={styles.noticeBold}>full name and phone number</Text> so they can reach you
-        about pickup — {when}. Nothing else is shared.
+        {farms} will receive your <Text style={styles.noticeBold}>full name and phone number</Text> (and, for delivery,
+        your address) so they can reach you about your order — {when}. Nothing else is shared.
       </Text>
     </View>
   );

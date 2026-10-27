@@ -1,7 +1,8 @@
 """Server-side calls to Supabase's Auth admin and Storage APIs, made with
 the service-role key (settings.SUPABASE_SERVICE_ROLE_KEY). The rest of the
-backend talks to Postgres directly; only account deletion needs these,
-because auth users and Storage files can't be deleted from SQL."""
+backend talks to Postgres directly; account deletion needs these, because
+auth users and Storage files can't be deleted from SQL, and so do
+proof-of-delivery photos (a private bucket: signed links, 30-day cleanup)."""
 import requests
 
 from app.core.config import settings
@@ -66,6 +67,25 @@ def delete_storage_paths(bucket: str, paths: list[str]) -> None:
             timeout=_TIMEOUT,
         )
         _check(resp, f"Deleting files in {bucket}")
+
+
+def create_signed_url(bucket: str, path: str, expires_in: int) -> str:
+    """A temporary link to one file in a private bucket — how customers see
+    their proof-of-delivery photo without the bucket being public."""
+    try:
+        resp = requests.post(
+            f"{settings.SUPABASE_URL}/storage/v1/object/sign/{bucket}/{path}",
+            headers=_headers(),
+            json={"expiresIn": expires_in},
+            timeout=_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        raise SupabaseAdminError(f"Signing {bucket}/{path} failed: {e}")
+    _check(resp, f"Signing {bucket}/{path}")
+    signed = resp.json().get("signedURL") or resp.json().get("signedUrl")
+    if not signed:
+        raise SupabaseAdminError(f"Signing {bucket}/{path} returned no URL")
+    return f"{settings.SUPABASE_URL}/storage/v1{signed}"
 
 
 def delete_auth_user(user_id: str) -> None:

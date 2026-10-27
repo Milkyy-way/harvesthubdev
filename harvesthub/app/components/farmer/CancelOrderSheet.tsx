@@ -13,11 +13,22 @@ const REASONS = [
   { value: 'other', label: 'Other…' },
 ];
 
+// "Couldn't deliver" on a delivery run — the same cancellation, other reasons.
+const DELIVERY_REASONS = [
+  { value: "Couldn't get in (gate, door code or building)", label: "Couldn't get in" },
+  { value: "Couldn't find the address", label: "Couldn't find it" },
+  { value: "Not safe to leave it at the door", label: 'Not safe to leave' },
+  { value: 'other', label: 'Other…' },
+];
+
+export type CancellableOrder = Pick<FarmerOrder, 'customer_name' | 'total' | 'service_fee' | 'payment_method'>;
+
 type Props = {
-  order: FarmerOrder | null; // null = closed
+  order: CancellableOrder | null; // null = closed
   submitting: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
+  delivery?: boolean; // "Couldn't deliver" wording and reasons
 };
 
 // Confirms a farmer cancellation and spells out what it costs before it
@@ -25,7 +36,7 @@ type Props = {
 // service fee comes out of the farmer's next payout (decided with the user);
 // a cash order hasn't been paid, so nothing is refunded and there's no fee.
 // The reason is shown to the customer.
-export function CancelOrderSheet({ order, submitting, onClose, onConfirm }: Props) {
+export function CancelOrderSheet({ order, submitting, onClose, onConfirm, delivery = false }: Props) {
   const insets = useSafeAreaInsets();
   const [choice, setChoice] = useState<string | null>(null);
   const [otherText, setOtherText] = useState('');
@@ -44,7 +55,7 @@ export function CancelOrderSheet({ order, submitting, onClose, onConfirm }: Prop
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
         <Pressable style={styles.flex1} onPress={close} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
-          <Text style={styles.title}>Cancel this order?</Text>
+          <Text style={styles.title}>{delivery ? "Couldn't deliver?" : 'Cancel this order?'}</Text>
           {order ? (
             <Text style={styles.body}>
               {paidByCard
@@ -54,21 +65,30 @@ export function CancelOrderSheet({ order, submitting, onClose, onConfirm }: Prop
           ) : null}
 
           <Text style={styles.label}>Reason (the customer will see this)</Text>
-          <TagSelector options={REASONS} value={choice ? [choice] : []} multiple={false} onChange={(next) => setChoice(next[0] ?? null)} />
+          <TagSelector
+            options={delivery ? DELIVERY_REASONS : REASONS}
+            value={choice ? [choice] : []}
+            multiple={false}
+            onChange={(next) => setChoice(next[0] ?? null)}
+          />
           {choice === 'other' ? (
             <TextField placeholder="Tell the customer why" value={otherText} onChangeText={setOtherText} maxLength={300} />
           ) : null}
 
           <View style={styles.actions}>
             <Pressable style={styles.keepButton} onPress={close} disabled={submitting}>
-              <Text style={styles.keepText}>Keep order</Text>
+              <Text style={styles.keepText}>{delivery ? 'Go back' : 'Keep order'}</Text>
             </Pressable>
             <Pressable
               style={[styles.confirmButton, !reason && styles.disabled]}
               onPress={() => reason && onConfirm(reason)}
               disabled={!reason || submitting}
             >
-              {submitting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.confirmText}>Cancel order</Text>}
+              {submitting ? (
+                <ActivityIndicator color={colors.white} />
+              ) : (
+                <Text style={styles.confirmText}>{delivery ? 'Cancel and refund' : 'Cancel order'}</Text>
+              )}
             </Pressable>
           </View>
         </View>

@@ -20,7 +20,7 @@ _JUST_PICKED_WINDOW_DAYS = 14
 # Mirrors the frontend's ProductCard.tsx LOW_STOCK_THRESHOLD — keep these
 # two in sync if either changes.
 _LOW_STOCK_THRESHOLD = 11
-_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "completed")
+_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "out_for_delivery", "completed")
 
 
 def list_products_for_farmer(

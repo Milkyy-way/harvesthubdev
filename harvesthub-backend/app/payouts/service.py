@@ -25,9 +25,13 @@ def create_ledger_entry_for_completion(db: Session, store_order: StoreOrder, cas
     whole store_order.total for a cash_on_pickup order, 0 for card). It
     comes straight off net, so a cash order's entry is negative: the farmer
     owes the platform its commission plus the service fee and tax they
-    collected, deducted from their next weekly payout."""
-    gross = round(float(store_order.subtotal) - float(store_order.promo_discount), 2)
-    commission = round(gross * FARMER_COMMISSION_RATE, 2)
+    collected, deducted from their next weekly payout.
+
+    A delivery fee is the farm's in full (it does the driving): it's part of
+    gross, but the commission is only ever on the goods."""
+    goods = round(float(store_order.subtotal) - float(store_order.promo_discount), 2)
+    commission = round(goods * FARMER_COMMISSION_RATE, 2)
+    gross = round(goods + float(store_order.delivery_fee or 0), 2)
     cash = round(cash_collected, 2)
     net = round(gross - commission - cash, 2)
     period_start, period_end = pay_period_for(date.today())

@@ -4,11 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { HARVEST_PASS_NAME } from '../../lib/harvestPass';
-
-// Where the shared message sends friends. Defaults to the Google Play
-// listing; set EXPO_PUBLIC_APP_SHARE_URL to a website or store link instead.
-const SHARE_URL =
-  process.env.EXPO_PUBLIC_APP_SHARE_URL ?? 'https://play.google.com/store/apps/details?id=com.harvesthubmarket.app';
+import { APP_SHARE_URL } from '../../constants/legal';
 
 // "Invite friends" — a plain share, with no codes and no rewards for either
 // side (decided with the user 2026-10-19). Every new customer already gets
@@ -21,7 +17,7 @@ export default function InviteFriendsScreen() {
     Share.share({
       message:
         `I get fresh food from local farms on HarvestHub. New members get ${HARVEST_PASS_NAME} free for their first ` +
-        `month — no service fee on bigger orders.\n\n${SHARE_URL}`,
+        `month — no service fee on bigger orders.\n\n${APP_SHARE_URL}`,
     }).catch((err) => console.warn('Share failed:', err));
   };
 

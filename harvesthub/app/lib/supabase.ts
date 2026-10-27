@@ -2,15 +2,11 @@ import 'react-native-url-polyfill/auto';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
+import { chunkedStorage } from './chunkedSecureStore';
 
-// Session tokens are stored with expo-secure-store, which uses the device's
-// Keychain (iOS) / Keystore (Android) rather than plain storage. This is the
-// main reason we don't just use AsyncStorage for auth.
-const ExpoSecureStoreAdapter = {
-  getItem: (key: string) => SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-  removeItem: (key: string) => SecureStore.deleteItemAsync(key),
-};
+// Session tokens live in the device's Keychain / Keystore, split into pieces
+// SecureStore can hold — see lib/chunkedSecureStore.ts.
+const authStorage = chunkedStorage(SecureStore);
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -26,7 +22,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // service_role key (which bypasses RLS) must never go in this project.
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: ExpoSecureStoreAdapter,
+    storage: authStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

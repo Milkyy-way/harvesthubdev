@@ -50,6 +50,9 @@ export interface FarmerOrder {
   customer_name: string | null;
   customer_phone: string | null; // only while the order is active
   fulfillment_method: FulfillmentMethod;
+  delivery_window_label: string | null; // delivery orders: "Fri, Nov 6 · 4–7 PM"
+  delivery_address_line: string | null; // while active
+  delivery_fee: number; // the farm keeps all of it
   items: FarmerOrderItem[];
   subtotal: number;
   promo_code: string | null;

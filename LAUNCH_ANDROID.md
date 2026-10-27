@@ -28,6 +28,7 @@ Work top to bottom. Steps 1–2 take weeks of waiting, so start them first and d
 | Harvest Pass free for every new customer's first 30 days; no referral rewards ("Invite friends" is a plain share) | `app/membership/`, `0029_harvest_pass_free_period.sql` |
 | **Push, email and text notifications** for orders, Harvest Pass, approvals and payouts, with a Notifications settings screen | `harvesthub-backend/app/notifications/`, `lib/pushNotifications.ts`, `0030_notifications.sql` |
 | Address suggestions while typing, precise geocoding, users can't write their own coordinates | `components/AddressSearchField.tsx`, `app/core/geocoding.py`, `0031_precise_locations.sql` |
+| **Farm delivery:** farms set fee/distance/windows, customers book a window, farmers run deliveries (route order, delivered + photo, couldn't deliver), customers follow progress | `app/delivery/`, `app/(farmer)/deliveries.tsx`, `0032_farm_delivery.sql` |
 
 > ⚠️ **The privacy policy and terms are drafts** written to match what the app actually does. Have a lawyer review `harvesthub-backend/app/legal/pages/privacy.html` and `terms.html` before launch. Set `COMPANY_NAME` to your LLC's exact name once it exists.
 
@@ -114,11 +115,11 @@ Create a **new** project for production, separate from the one you develop on, s
   ```
   - Get the connection string from Project Settings → Database → Connection string → **Session pooler**, with your password filled in.
   - The script uses `psql` from your PostgreSQL install, applies all migrations in order, and **skips the sample farms**. It's safe to run again.
-- [ ] Also bring your **development** project up to date (it needs the new `0029`–`0031`):
+- [ ] Also bring your **development** project up to date (it needs the new `0032` — farm delivery; it also creates the private `delivery-photos` storage bucket):
   ```
-  node supabase/apply-migrations.mjs "<dev connection string>" --from 0029
+  node supabase/apply-migrations.mjs "<dev connection string>" --from 0032
   ```
-  If you never applied 0027–0028 there, use `--from 0027` (or `--from 0020` if 0020–0026 are missing too).
+  If you never applied 0029–0031 there, use `--from 0029` (every migration is safe to run again).
 - [ ] Check the extensions (Database → Extensions): **pg_cron** should be on (the migration turns it on). pg_net isn't needed any more (farmer emails now come from the backend).
 
 ### Authentication settings (production project)
@@ -238,7 +239,7 @@ All commands run in `harvesthub/app`.
   npx eas-cli env:create --environment production --name EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY --value pk_live_... --visibility plaintext
   ```
   Do the same for `--environment preview` if you build preview APKs. Never put the service-role key or `sk_` keys here: everything in the app can be read by anyone.
-- [ ] **Rebuild your dev app** (push notifications added native code, so the old dev build can't use them). Put `google-services.json` in place first (step 3d). It installs as "HarvestHub Dev":
+- [ ] **Rebuild your dev app** (push notifications, and the camera for delivery photos, added native code the old dev build doesn't have). Put `google-services.json` in place first (step 3d). It installs as "HarvestHub Dev":
   ```
   npx eas-cli build --profile development --platform android
   ```
@@ -285,13 +286,13 @@ All commands run in `harvesthub/app`.
   | Personal info → **Name** | Required | App functionality, Account management | **Yes**, with the farm you order from (App functionality)* |
   | Personal info → **Email address** | Required | Account management, App functionality (verification and reset codes) | No |
   | Personal info → **Phone number** | Required | App functionality (and order texts, if the user turns them on) | **Yes**, with the farm you order from* |
-  | Personal info → **Address** | Required | App functionality (nearby farms; farm pickup address; address suggestions) | No (Google Maps is a service provider) |
+  | Personal info → **Address** | Required | App functionality (nearby farms; farm pickup address; address suggestions; delivery) | **Yes**, for delivery orders, with the farm delivering it* |
   | Device or other IDs → **Device or other IDs** (push notification token) | Optional (only if notifications are allowed) | App functionality | No |
   | Personal info → **Other info** (dietary preferences, farmer license numbers, references) | Optional | App functionality | No |
   | Financial info → **User payment info** | Optional (cash on pickup exists) | App functionality (card payments via Stripe) | No (Stripe is a service provider) |
   | Financial info → **Purchase history** | Required | App functionality | No |
   | Financial info → **Other financial info** (farmer tax ID, earnings) | Optional | App functionality, Fraud prevention / compliance | No |
-  | Photos and videos → **Photos** (farm and product photos) | Optional | App functionality | No |
+  | Photos and videos → **Photos** (farm and product photos; farmers' proof-of-delivery photos, kept 30 days) | Optional | App functionality | **Yes**, a delivery photo with the customer it was delivered to |
   | Files and docs → **Files and docs** (farmer verification documents) | Optional | App functionality, Fraud prevention / compliance | No |
   | App activity → **Other user-generated content** (ratings, comments) | Optional | App functionality | No |
 

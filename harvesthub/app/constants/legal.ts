@@ -10,3 +10,9 @@ export const LEGAL_URLS = {
   terms: `${base}/terms`,
   deleteAccount: `${base}/delete-account`,
 } as const;
+
+// The link "Invite friends" shares (harvesthub-backend/app/legal/router.py,
+// GET /app): Android phones land on Google Play, iPhones on the App Store
+// once it's listed, anything else on a page with both. Same base as above,
+// or EXPO_PUBLIC_APP_SHARE_URL to share a different link entirely.
+export const APP_SHARE_URL = process.env.EXPO_PUBLIC_APP_SHARE_URL ?? `${base}/app`;

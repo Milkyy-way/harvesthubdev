@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 
 # Every user's files live under a folder named after their user id
 # (0006 and 0009's storage policies enforce that).
-_USER_BUCKETS = ("farmer-verification-docs", "farmer-photos")
+_USER_BUCKETS = ("farmer-verification-docs", "farmer-photos", "delivery-photos")
 
 # Store orders the other side is still acting on — the same set the
 # farmer's Orders tab treats as active, limited to released orders
 # (an unreleased pending_payment card order is an abandoned checkout).
 _ACTIVE_STORE_ORDERS = """
     so.released_to_farmer_at is not null
-    and so.status in ('pending_payment', 'paid', 'ready_for_pickup')
+    and so.status in ('pending_payment', 'paid', 'ready_for_pickup', 'out_for_delivery')
 """
 
 
@@ -79,15 +79,20 @@ def deletion_blockers(db: Session, user_id: str) -> list[str]:
     return blockers
 
 
-def delete_account(user_id: str) -> None:
+def delete_account(user_id: str, doorstep_photos: list[str] | None = None) -> None:
     """Deletes the user's Storage files, then the auth user — 0027's
     trigger erases or anonymizes everything in the database in the same
     step. Files go first so a failure never leaves documents (a government
     ID, a business license) behind an account that no longer exists; if
-    either step fails, the user can simply try again."""
+    either step fails, the user can simply try again.
+
+    doorstep_photos: a customer's proof-of-delivery photos, which live in
+    the farmers' folders (app/delivery/service.py::customer_photo_paths)."""
     for bucket in _USER_BUCKETS:
         paths = supabase_admin.list_storage_paths(bucket, user_id)
         if paths:
             supabase_admin.delete_storage_paths(bucket, paths)
+    if doorstep_photos:
+        supabase_admin.delete_storage_paths("delivery-photos", doorstep_photos)
     supabase_admin.delete_auth_user(user_id)
     logger.info("Deleted account %s", user_id)

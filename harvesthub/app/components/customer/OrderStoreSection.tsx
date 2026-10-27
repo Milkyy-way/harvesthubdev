@@ -3,8 +3,10 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import type { StoreOrder } from '../../types/orders';
 import { RatingStars } from './RatingStars';
+import { DeliveryTracker } from './DeliveryTracker';
 
 type Props = {
+  orderId: string;
   storeOrder: StoreOrder;
   paysAtPickup: boolean; // cash_on_pickup — the order's single payment covers every farm in it
   busy: boolean;
@@ -18,6 +20,7 @@ const STATUS_LABELS: Record<StoreOrder['status'], string> = {
   pending_payment: 'Awaiting payment',
   paid: 'Paid — preparing',
   ready_for_pickup: 'Ready for pickup',
+  out_for_delivery: 'On the way',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
@@ -26,11 +29,13 @@ const STATUS_COLORS: Record<StoreOrder['status'], string> = {
   pending_payment: colors.accent,
   paid: colors.primaryMid,
   ready_for_pickup: colors.primary,
+  out_for_delivery: colors.primary,
   completed: colors.primaryDark,
   cancelled: colors.danger,
 };
 
-export function OrderStoreSection({ storeOrder, paysAtPickup, busy, onCancel, onMarkReceived, onRate, ratingBusy }: Props) {
+export function OrderStoreSection({ orderId, storeOrder, paysAtPickup, busy, onCancel, onMarkReceived, onRate, ratingBusy }: Props) {
+  const isDelivery = storeOrder.fulfillment_method === 'delivery';
   const addressLine =
     storeOrder.fulfillment_method === 'pickup'
       ? [storeOrder.pickup_address_street, storeOrder.pickup_address_city, storeOrder.pickup_address_state, storeOrder.pickup_address_zip]
@@ -48,13 +53,17 @@ export function OrderStoreSection({ storeOrder, paysAtPickup, busy, onCancel, on
   // The farm marks an order ready once it's packed; only then can the
   // customer confirm pickup. A cash order is paid at pickup, so until then
   // it stays 'pending_payment' (shown as "Preparing", not "Awaiting payment").
-  const preparing = storeOrder.status === 'paid' || (paysAtPickup && storeOrder.status === 'pending_payment');
+  const preparing = !isDelivery && (storeOrder.status === 'paid' || (paysAtPickup && storeOrder.status === 'pending_payment'));
   const statusLabel =
     paysAtPickup && storeOrder.status === 'pending_payment'
       ? 'Preparing · pay at pickup'
       : paysAtPickup && storeOrder.status === 'ready_for_pickup'
         ? 'Ready · pay at pickup'
-        : STATUS_LABELS[storeOrder.status];
+        : isDelivery && storeOrder.status === 'paid'
+          ? 'Delivery scheduled'
+          : isDelivery && storeOrder.status === 'completed'
+            ? 'Delivered'
+            : STATUS_LABELS[storeOrder.status];
   const canCancel =
     storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup';
   const canMarkReceived = storeOrder.status === 'ready_for_pickup';
@@ -79,9 +88,15 @@ export function OrderStoreSection({ storeOrder, paysAtPickup, busy, onCancel, on
           color={colors.textMuted}
         />
         <Text style={styles.fulfillmentText} numberOfLines={2}>
-          {storeOrder.fulfillment_method === 'pickup' ? `Pickup at ${addressLine}` : `Delivery to ${addressLine}`}
+          {storeOrder.fulfillment_method === 'pickup'
+            ? `Pickup at ${addressLine}`
+            : `Delivery ${storeOrder.delivery?.window_label ?? ''} to ${addressLine}`}
         </Text>
       </View>
+
+      {isDelivery && storeOrder.delivery && storeOrder.status !== 'pending_payment' ? (
+        <DeliveryTracker orderId={orderId} storeOrderId={storeOrder.id} delivery={storeOrder.delivery} />
+      ) : null}
 
       <View style={styles.items}>
         {storeOrder.items.map((item) => (

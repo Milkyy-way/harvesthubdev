@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,29 +9,21 @@ import { apiClient } from '../../lib/apiClient';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCheckoutDraft } from '../../contexts/CheckoutDraftContext';
 import { CartFarmSection } from '../../components/customer/CartFarmSection';
-import { isFulfillmentReady, type DeliveryAddressDraft } from '../../types/checkout';
+import { isFulfillmentReady } from '../../types/checkout';
 import type { CartActionResponse, CartSummary } from '../../types/database';
+import type { FarmDeliveryOption } from '../../types/delivery';
 
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { customerProfile } = useAuth();
-  const { fulfillmentByFarm, ensureFarm, setMethod, setDeliveryField } = useCheckoutDraft();
+  const { fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot } = useCheckoutDraft();
 
   const [cart, setCart] = useState<CartSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
-
-  const defaultDeliveryAddress: DeliveryAddressDraft = useMemo(
-    () => ({
-      street: customerProfile?.address_street ?? '',
-      city: customerProfile?.address_city ?? '',
-      state: customerProfile?.address_state ?? '',
-      zip: customerProfile?.address_zip ?? '',
-    }),
-    [customerProfile]
-  );
+  const [deliveryByFarm, setDeliveryByFarm] = useState<Record<string, FarmDeliveryOption>>({});
 
   const loadCart = useCallback(() => {
     setLoading(true);
@@ -44,7 +36,7 @@ export default function CartScreen() {
         // overwrites a choice the customer already made this session
         // (ensureFarm no-ops if one already exists).
         for (const farm of res.data.farms) {
-          ensureFarm(farm.farmer_id, defaultDeliveryAddress);
+          ensureFarm(farm.farmer_id);
         }
       })
       .catch((err) => {
@@ -52,10 +44,33 @@ export default function CartScreen() {
         setError("Couldn't load your cart. Pull down to try again.");
       })
       .finally(() => setLoading(false));
-    // defaultDeliveryAddress/ensureFarm intentionally excluded — seeding
-    // only needs to happen once per farm, not re-run on every render.
+    // ensureFarm intentionally excluded — seeding only needs to happen once
+    // per farm, not re-run on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Which farms deliver to this customer, and when. Re-asked when the farms
+  // in the cart change, or the saved address does (Edit Profile).
+  const farmIdsKey = (cart?.farms ?? []).map((f) => f.farmer_id).join(',');
+  const addressKey = `${customerProfile?.address_street}|${customerProfile?.address_zip}`;
+  useEffect(() => {
+    if (!farmIdsKey) return;
+    apiClient
+      .get<{ farms: FarmDeliveryOption[] }>('/delivery/options', { params: { farmer_ids: farmIdsKey } })
+      .then((res) => setDeliveryByFarm(Object.fromEntries(res.data.farms.map((f) => [f.farmer_id, f]))))
+      .catch((err) => console.warn('Could not load delivery options:', err));
+  }, [farmIdsKey, addressKey]);
+
+  // A farm that can't deliver here anymore (address changed, window gone)
+  // falls back to pickup rather than leaving a choice that can't be placed.
+  useEffect(() => {
+    for (const [farmerId, option] of Object.entries(deliveryByFarm)) {
+      const draft = fulfillmentByFarm[farmerId];
+      if (draft?.method !== 'delivery') continue;
+      if (!option.available) setMethod(farmerId, 'pickup');
+      else if (draft.deliverySlot && !option.slots.some((s) => s.starts_at === draft.deliverySlot)) setDeliverySlot(farmerId, null);
+    }
+  }, [deliveryByFarm, fulfillmentByFarm, setMethod, setDeliverySlot]);
 
   useFocusEffect(
     useCallback(() => {
@@ -157,8 +172,9 @@ export default function CartScreen() {
             onRemove={(productId) => handleRemove(farm.farmer_id, productId)}
             method={fulfillmentByFarm[farm.farmer_id]?.method ?? null}
             onSelectMethod={(method) => setMethod(farm.farmer_id, method)}
-            deliveryAddress={fulfillmentByFarm[farm.farmer_id]?.deliveryAddress ?? defaultDeliveryAddress}
-            onChangeDeliveryAddress={(field, value) => setDeliveryField(farm.farmer_id, field, value)}
+            delivery={deliveryByFarm[farm.farmer_id] ?? null}
+            deliverySlot={fulfillmentByFarm[farm.farmer_id]?.deliverySlot ?? null}
+            onSelectDeliverySlot={(startsAt) => setDeliverySlot(farm.farmer_id, startsAt)}
             readyToPlaceSeparately={isFulfillmentReady(fulfillmentByFarm[farm.farmer_id])}
             onPlaceOrderSeparately={() => goToCheckout([farm.farmer_id])}
           />
@@ -186,7 +202,7 @@ export default function CartScreen() {
             disabled={!readyForCheckout}
           >
             <Text style={styles.checkoutText}>
-              {readyForCheckout ? 'Checkout at Once' : 'Choose pickup or delivery for each farm'}
+              {readyForCheckout ? 'Checkout at Once' : 'Choose pickup, or a delivery time, for each farm'}
             </Text>
           </Pressable>
         </View>

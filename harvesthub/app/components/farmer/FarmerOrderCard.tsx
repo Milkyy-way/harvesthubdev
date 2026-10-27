@@ -1,4 +1,5 @@
 import { View, Text, Pressable, ActivityIndicator, Linking, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import type { FarmerOrder } from '../../types/farmer';
@@ -14,6 +15,7 @@ const STATUS: Record<FarmerOrder['status'], { label: string; color: string }> = 
   pending_payment: { label: 'To prepare', color: colors.accent }, // a cash order, paid at pickup
   paid: { label: 'To prepare', color: colors.accent },
   ready_for_pickup: { label: 'Ready for pickup', color: colors.primary },
+  out_for_delivery: { label: 'Out for delivery', color: colors.primary },
   completed: { label: 'Picked up', color: colors.primaryDark },
   cancelled: { label: 'Cancelled', color: colors.danger },
 };
@@ -22,10 +24,18 @@ const STATUS: Record<FarmerOrder['status'], { label: string; color: string }> = 
 // The customer's phone is only present while the order is active — the
 // backend stops sending it once the order is picked up or cancelled.
 export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
-  const status = STATUS[order.status];
+  const router = useRouter();
+  const isDelivery = order.fulfillment_method === 'delivery';
+  const status =
+    isDelivery && order.status === 'completed'
+      ? { label: 'Delivered', color: colors.primaryDark }
+      : isDelivery && order.status === 'paid'
+        ? { label: 'To pack for delivery', color: colors.accent }
+        : STATUS[order.status];
   const isCash = order.payment_method === 'cash_on_pickup';
   const toPrepare = order.status === 'paid' || order.status === 'pending_payment';
   const ready = order.status === 'ready_for_pickup';
+  const onItsWay = order.status === 'out_for_delivery';
   const placed = new Date(order.placed_at);
 
   return (
@@ -55,6 +65,16 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
         </Text>
       </View>
 
+      {isDelivery && order.delivery_window_label ? (
+        <View style={styles.paymentRow}>
+          <MaterialIcons name="local-shipping" size={16} color={colors.textMuted} />
+          <Text style={styles.paymentText}>
+            Deliver {order.delivery_window_label}
+            {order.delivery_address_line ? ` · ${order.delivery_address_line}` : ''}
+          </Text>
+        </View>
+      ) : null}
+
       {order.customer_phone ? (
         <Pressable style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${order.customer_phone}`)} hitSlop={6}>
           <MaterialIcons name="phone" size={16} color={colors.primary} />
@@ -78,6 +98,9 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
         {order.promo_discount > 0 ? (
           <Line label={`Your promo (${order.promo_code})`} value={`-$${order.promo_discount.toFixed(2)}`} />
         ) : null}
+        {isDelivery && order.delivery_fee > 0 ? (
+          <Line label="Delivery fee (all yours)" value={`$${order.delivery_fee.toFixed(2)}`} />
+        ) : null}
         {order.status === 'cancelled' ? (
           order.refunded_amount > 0 ? <Line label="Refunded to customer" value={`$${order.refunded_amount.toFixed(2)}`} /> : null
         ) : (
@@ -94,12 +117,16 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
 
       {ready ? <Text style={styles.waiting}>Waiting for the customer to pick up.</Text> : null}
 
-      {toPrepare || ready ? (
+      {toPrepare || ready || onItsWay ? (
         <View style={styles.actions}>
           <Pressable style={styles.cancelButton} onPress={onCancel} disabled={busy}>
             <Text style={styles.cancelText}>Cancel</Text>
           </Pressable>
-          {toPrepare ? (
+          {isDelivery ? (
+            <Pressable style={styles.readyButton} onPress={() => router.push('/(farmer)/deliveries')}>
+              <Text style={styles.readyText}>{onItsWay ? 'Open delivery run' : 'See in Deliveries'}</Text>
+            </Pressable>
+          ) : toPrepare ? (
             <Pressable style={styles.readyButton} onPress={onMarkReady} disabled={busy}>
               {busy ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.readyText}>Mark ready for pickup</Text>}
             </Pressable>

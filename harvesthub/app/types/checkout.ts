@@ -5,25 +5,16 @@
 
 export type FulfillmentMethod = 'pickup' | 'delivery';
 
-export interface DeliveryAddressDraft {
-  street: string;
-  city: string;
-  state: string;
-  zip: string;
-}
-
+// Deliveries go to the customer's saved address (Edit Profile), so the only
+// thing to choose for one is the window.
 export interface FarmFulfillment {
   method: FulfillmentMethod | null;
-  deliveryAddress: DeliveryAddressDraft;
+  deliverySlot: string | null; // DeliverySlot.starts_at
 }
 
 export function isFulfillmentReady(fulfillment: FarmFulfillment | undefined): boolean {
   if (!fulfillment?.method) return false;
-  if (fulfillment.method === 'delivery') {
-    const { street, city, state, zip } = fulfillment.deliveryAddress;
-    return Boolean(street.trim() && city.trim() && state.trim() && zip.trim());
-  }
-  return true;
+  return fulfillment.method === 'pickup' || Boolean(fulfillment.deliverySlot);
 }
 
 // Matches CheckoutLineItemOut/CheckoutGroupOut/CheckoutPreviewResponse
@@ -53,6 +44,11 @@ export interface CheckoutGroup {
   promo_discount: number;
   promo_error: string | null;
   delivery_fee: number;
+  // Delivery only: the window, where it goes, or why it can't be delivered
+  // (the order can't be placed while delivery_error is set).
+  delivery_window_label: string | null;
+  delivery_address_line: string | null;
+  delivery_error: string | null;
   service_fee: number;
   member_savings: number; // service fee Harvest Pass waived for this farm
   tax: number;

@@ -2,18 +2,15 @@
 #
 # These are PLACEHOLDER values, not researched or legally reviewed figures,
 # except for tax (see app/core/tax.py — real jurisdiction/category rates
-# now apply, DC/MD/VA only, farm-jurisdiction-based for the pickup-only
-# phase). Real delivery pricing likely needs a mileage tier once
-# farm-to-customer distance is factored in (farmer_profiles/
-# customer_profiles already have the coordinates for that — see
-# app/core/geo.py's haversine_km — this just isn't wired up yet). An open
-# business decision, not something to guess into "done."
+# now apply, DC/MD/VA only, keyed by the farm's state; whether delivered
+# orders should be taxed by the delivery address instead is a question for
+# the accountant). Delivery fees aren't set here: each farm sets its own
+# and keeps all of it (app/delivery/, decided with the user 2026-10-27).
 #
 # Centralized here so replacing any of these later is a one-file change,
 # not a hunt through every place that touches money.
 
 SERVICE_FEE_RATE = 0.05  # 5% of subtotal — placeholder platform fee
-DELIVERY_FEE_FLAT = 4.99  # flat fee for delivery orders — not mileage-based yet
 
 # Harvest Pass (customer membership — see app/membership/). Only the base
 # monthly price needs changing to reprice everything: each plan's price is
@@ -48,7 +45,8 @@ def harvest_pass_plan_price(plan: str) -> tuple[int, float, float]:
 
 
 # Farmer payout commission — flat 12% of (subtotal - promo_discount) at the
-# time a store order is marked completed (see app/payouts/service.py).
+# time a store order is marked completed (see app/payouts/service.py). Never
+# on a delivery fee: the farm keeps that in full.
 # Snapshotted onto each farmer_ledger_entries row at creation time, so a
 # future rate change here never retroactively alters historical entries.
 FARMER_COMMISSION_RATE = 0.12

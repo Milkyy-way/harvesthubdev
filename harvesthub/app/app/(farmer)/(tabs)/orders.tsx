@@ -13,8 +13,8 @@ import type { FarmerOrder, FarmerOrderView, FarmerOrdersResponse } from '../../.
 
 const VIEWS: { key: FarmerOrderView; label: string; empty: string }[] = [
   { key: 'to_prepare', label: 'To prepare', empty: 'No orders to prepare right now. New orders show up here as soon as they’re placed.' },
-  { key: 'ready', label: 'Ready', empty: 'Nothing waiting for pickup.' },
-  { key: 'completed', label: 'Picked up', empty: 'Picked-up orders will appear here.' },
+  { key: 'ready', label: 'Ready / out', empty: 'Nothing waiting for pickup or out for delivery.' },
+  { key: 'completed', label: 'Done', empty: 'Picked-up and delivered orders will appear here.' },
   { key: 'cancelled', label: 'Cancelled', empty: 'No cancelled orders.' },
 ];
 

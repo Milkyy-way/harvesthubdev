@@ -191,6 +191,7 @@ export default function OrderDetailScreen() {
         }
         renderItem={({ item: storeOrder }) => (
           <OrderStoreSection
+            orderId={order.id}
             storeOrder={storeOrder}
             paysAtPickup={order.payment?.payment_method === 'cash_on_pickup'}
             busy={busyStoreOrderId === storeOrder.id}
