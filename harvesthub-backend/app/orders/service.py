@@ -675,13 +675,25 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
     return build_order_out(db, order.id)
 
 
-def delivery_photo_url(db: Session, customer_id: str, order_id: str, store_order_id: str) -> str | None:
-    """The proof-of-delivery photo for one of the customer's own orders."""
+def _owned_delivery(db: Session, customer_id: str, order_id: str, store_order_id: str) -> StoreOrder:
     order = get_owned_order(db, customer_id, order_id)
     store_order = db.query(StoreOrder).filter(StoreOrder.id == store_order_id, StoreOrder.order_id == order.id).first()
     if not store_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
-    return delivery_service.photo_url(db, store_order)
+    return store_order
+
+
+def delivery_photo_url(db: Session, customer_id: str, order_id: str, store_order_id: str) -> str | None:
+    """The proof-of-delivery photo for one of the customer's own orders."""
+    return delivery_service.photo_url(db, _owned_delivery(db, customer_id, order_id, store_order_id))
+
+
+def delivery_tracking(db: Session, customer_id: str, order_id: str, store_order_id: str) -> dict:
+    """Live tracking for one of the customer's own delivery orders."""
+    tracking = delivery_service.tracking_for(db, _owned_delivery(db, customer_id, order_id, store_order_id))
+    if tracking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This isn't a delivery order")
+    return tracking
 
 
 def mark_store_order_completed(db: Session, customer_id: str, order_id: str, store_order_id: str) -> dict:

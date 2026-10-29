@@ -11,6 +11,10 @@
     of where it was left — which completes the order and its ledger entry.
     A stop that can't be delivered is cancelled and refunded through the
     farmer-cancel path in app/orders/service.py, which calls release_stop().
+  * Live tracking (0033): while a run is in progress the farmer's phone
+    reports its position; the customer whose stop is next sees it on a map
+    with a rough arrival estimate. Only the latest point is kept, and it's
+    cleared when the run completes.
 
 Nothing here imports app/orders/service.py (it imports us).
 """
@@ -44,6 +48,14 @@ PHOTO_BUCKET = "delivery-photos"
 PHOTO_RETENTION = timedelta(days=30)
 _PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "heic")
 _MAX_WINDOWS = 21
+
+# Live tracking. A position older than this is shown as "last updated …".
+LOCATION_STALE_AFTER = timedelta(minutes=3)
+# Arrival estimate without a routing service: straight-line distance times a
+# typical road-network detour, at a typical suburban driving speed. Rough —
+# the app says "about".
+_ROAD_FACTOR = 1.35
+_AVERAGE_SPEED_KMH = 35.0
 
 # Defaults for a farm that hasn't saved settings yet (match 0032's).
 DEFAULT_FEE = 5.00
@@ -525,6 +537,25 @@ def _finish_if_done(db: Session, run: DeliveryRun) -> None:
     )
     if run.status == "in_progress" and not left:
         run.status, run.completed_at = "completed", _now()
+        _clear_location(run)
+
+
+def _clear_location(run: DeliveryRun) -> None:
+    run.current_latitude = run.current_longitude = run.current_heading = None
+    run.location_updated_at = None
+
+
+def record_location(db: Session, farmer_id, run_id: str, latitude: float, longitude: float, heading: float | None) -> None:
+    """The farmer's phone, every ~15 s during a run (also in the background).
+    Only the latest point is kept. Refused once the run isn't in progress —
+    the app stops sharing when it sees that."""
+    run = _owned_run(db, farmer_id, run_id)
+    if run.status != "in_progress":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This run isn't in progress, so there's nothing to share.")
+    run.current_latitude, run.current_longitude = latitude, longitude
+    run.current_heading = heading
+    run.location_updated_at = _now()
+    db.commit()
 
 
 def mark_delivered(db: Session, farmer_id, run_id: str, stop_id: str, photo_path: str | None, note: str | None) -> dict:
@@ -632,6 +663,43 @@ def progress_for(db: Session, store_order: StoreOrder) -> dict | None:
         "has_photo": bool(stop is not None and stop.photo_path),
         "note": stop.note if stop is not None else None,
     }
+
+
+def tracking_for(db: Session, store_order: StoreOrder) -> dict | None:
+    """What the customer's order screen polls while a delivery is on its way.
+    The farmer's live position — and the arrival estimate — only for the
+    customer who's NEXT: before that it's just "N stops before yours", so no
+    one can watch the farmer stop at other customers' homes."""
+    progress = progress_for(db, store_order)
+    if progress is None:
+        return None
+    out = {
+        "stage": progress["stage"],
+        "stops_before": progress["stops_before"],
+        "farmer": None,
+        "destination": None,
+        "eta_minutes": None,
+    }
+    if progress["stage"] != "on_the_way" or progress["stops_before"] != 0:
+        return out
+    stop = db.get(DeliveryStop, store_order.delivery_stop_id)
+    run = db.get(DeliveryRun, stop.run_id)
+    if run.current_latitude is None or run.location_updated_at is None:
+        return out  # started, but the phone hasn't reported yet
+
+    out["farmer"] = {
+        "latitude": run.current_latitude,
+        "longitude": run.current_longitude,
+        "heading": run.current_heading,
+        "updated_at": run.location_updated_at.isoformat(),
+        "stale": _now() - run.location_updated_at > LOCATION_STALE_AFTER,
+    }
+    if stop.latitude is not None and stop.longitude is not None:
+        # Their own stop — fine to show them.
+        out["destination"] = {"latitude": stop.latitude, "longitude": stop.longitude}
+        km = haversine_km(run.current_latitude, run.current_longitude, stop.latitude, stop.longitude) * _ROAD_FACTOR
+        out["eta_minutes"] = max(1, round(km / _AVERAGE_SPEED_KMH * 60))
+    return out
 
 
 def photo_url(db: Session, store_order: StoreOrder) -> str | None:

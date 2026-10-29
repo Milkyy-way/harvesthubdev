@@ -43,6 +43,12 @@ class DeliveryRun(Base):
     status = Column(String, nullable=False, default="scheduled")  # 'scheduled' | 'in_progress' | 'completed'
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Live tracking (0033): the farmer's latest position while the run is in
+    # progress — no trail; cleared when it completes.
+    current_latitude = Column(Float, nullable=True)
+    current_longitude = Column(Float, nullable=True)
+    current_heading = Column(Float, nullable=True)
+    location_updated_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -29,6 +29,7 @@ Work top to bottom. Steps 1–2 take weeks of waiting, so start them first and d
 | **Push, email and text notifications** for orders, Harvest Pass, approvals and payouts, with a Notifications settings screen | `harvesthub-backend/app/notifications/`, `lib/pushNotifications.ts`, `0030_notifications.sql` |
 | Address suggestions while typing, precise geocoding, users can't write their own coordinates | `components/AddressSearchField.tsx`, `app/core/geocoding.py`, `0031_precise_locations.sql` |
 | **Farm delivery:** farms set fee/distance/windows, customers book a window, farmers run deliveries (route order, delivered + photo, couldn't deliver), customers follow progress | `app/delivery/`, `app/(farmer)/deliveries.tsx`, `0032_farm_delivery.sql` |
+| **Live delivery tracking:** the farmer's location (optional, background, foreground-service notification) on a map for the customer who's next, with an arrival estimate | `lib/liveLocation.ts`, `components/customer/LiveDeliveryMap.tsx`, `0033_live_tracking.sql` |
 
 > ⚠️ **The privacy policy and terms are drafts** written to match what the app actually does. Have a lawyer review `harvesthub-backend/app/legal/pages/privacy.html` and `terms.html` before launch. Set `COMPANY_NAME` to your LLC's exact name once it exists.
 
@@ -101,6 +102,25 @@ Android push goes through Firebase Cloud Messaging; Expo's push service (free) t
 - [ ] Give it to Expo: `npx eas-cli credentials -p android` → production → **Google Service Account** → **Manage your Google Service Account Key for Push Notifications (FCM V1)** → upload the JSON. Repeat for the development profile.
 - [ ] iOS later: EAS sets up the Apple push key for you on the first iOS build (needs the Apple Developer account).
 
+## 3e. Map in the app (Google Maps SDK for Android)
+
+The live delivery map needs its own key, because it's built into the app (the server key from 3c stays on the server). Showing maps in the app is free on Google's side.
+
+- [ ] Google Cloud → **APIs & Services → Library** → enable **Maps SDK for Android**.
+- [ ] **Credentials → Create credentials → API key**. Then edit it:
+  - **API restrictions → Restrict key** → only **Maps SDK for Android**.
+  - **Application restrictions → Android apps** → add each app with its signing fingerprint:
+    - `com.harvesthubmarket.app.dev`: the SHA-1 from `npx eas-cli credentials -p android` → development.
+    - `com.harvesthubmarket.app`: the SHA-1 of your production keystore (same command → production), **and later** the "App signing key certificate" SHA-1 from Play Console → Test and release → App integrity.
+  - Name it e.g. "HarvestHub Android app".
+- [ ] Give it to the builds (it's read when the app is **built**):
+  ```
+  npx eas-cli env:create --environment development --name GOOGLE_MAPS_ANDROID_API_KEY --value <key> --visibility sensitive
+  npx eas-cli env:create --environment production --name GOOGLE_MAPS_ANDROID_API_KEY --value <key> --visibility sensitive
+  ```
+  (and `preview` if you build those). For local builds, put it in `harvesthub/app/.env`.
+- Without it the app still works: customers see "arriving in about N min" without the map.
+
 ## 4. Supabase production project
 
 Create a **new** project for production, separate from the one you develop on, so test data never mixes with real customers.
@@ -115,11 +135,11 @@ Create a **new** project for production, separate from the one you develop on, s
   ```
   - Get the connection string from Project Settings → Database → Connection string → **Session pooler**, with your password filled in.
   - The script uses `psql` from your PostgreSQL install, applies all migrations in order, and **skips the sample farms**. It's safe to run again.
-- [ ] Also bring your **development** project up to date (it needs the new `0032` — farm delivery; it also creates the private `delivery-photos` storage bucket):
+- [ ] Also bring your **development** project up to date (it needs the new `0033` — live tracking):
   ```
-  node supabase/apply-migrations.mjs "<dev connection string>" --from 0032
+  node supabase/apply-migrations.mjs "<dev connection string>" --from 0033
   ```
-  If you never applied 0029–0031 there, use `--from 0029` (every migration is safe to run again).
+  If you haven't applied 0032 (farm delivery, which also creates the private `delivery-photos` bucket) there yet, use `--from 0032` (every migration is safe to run again).
 - [ ] Check the extensions (Database → Extensions): **pg_cron** should be on (the migration turns it on). pg_net isn't needed any more (farmer emails now come from the backend).
 
 ### Authentication settings (production project)
@@ -239,7 +259,7 @@ All commands run in `harvesthub/app`.
   npx eas-cli env:create --environment production --name EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY --value pk_live_... --visibility plaintext
   ```
   Do the same for `--environment preview` if you build preview APKs. Never put the service-role key or `sk_` keys here: everything in the app can be read by anyone.
-- [ ] **Rebuild your dev app** (push notifications, and the camera for delivery photos, added native code the old dev build doesn't have). Put `google-services.json` in place first (step 3d). It installs as "HarvestHub Dev":
+- [ ] **Rebuild your dev app** (push notifications, the camera for delivery photos, and location + maps for live tracking added native code the old dev build doesn't have; set `GOOGLE_MAPS_ANDROID_API_KEY` first, step 3e). Put `google-services.json` in place first (step 3d). It installs as "HarvestHub Dev":
   ```
   npx eas-cli build --profile development --platform android
   ```
@@ -266,10 +286,14 @@ All commands run in `harvesthub/app`.
   - Category: "All other app types".
   - Answer **No** to violence, sexual content, profanity, drugs, and gambling.
   - Users can leave ratings and comments that the farm sees. Answer the user-interaction questions with that in mind.
-  - It doesn't share users' location and has no digital purchases. Purchases are of physical goods.
+  - It shares a farmer's location with one customer during a delivery (see Location permissions below), and has no digital purchases. Purchases are of physical goods.
 - [ ] **Target audience:** 18 and over only. The app is not designed for children.
 - [ ] **News app:** No. **Health apps:** None. **Government app:** No.
 - [ ] **Financial features:** HarvestHub sells physical goods with Stripe checkout. That isn't banking, lending, a wallet, or money transfer, so it isn't a financial feature in Google's sense. Read the list and answer accurately.
+- [ ] **Location permissions** (App content → Sensitive app permissions). The app asks for background location, so Google reviews it:
+  - Core feature: "Farmers who deliver can share their live location while a delivery run is in progress, so the customer they're heading to sees them on a map with an arrival time. It's optional, starts when the farmer starts a run and stops when the run ends."
+  - Video (30–60 s, unlisted YouTube link): a farmer starts a run → the in-app explanation ("Share your location while you deliver?") → the system permission prompt → the run screen with the notification → the customer's map.
+  - **Foreground service** declaration: type **location**, same explanation (user-started delivery tracking with a visible notification).
 - [ ] **Data safety.** Answer exactly as below; it matches the app and the privacy policy:
 
   **Overview questions**
@@ -288,6 +312,7 @@ All commands run in `harvesthub/app`.
   | Personal info → **Phone number** | Required | App functionality (and order texts, if the user turns them on) | **Yes**, with the farm you order from* |
   | Personal info → **Address** | Required | App functionality (nearby farms; farm pickup address; address suggestions; delivery) | **Yes**, for delivery orders, with the farm delivering it* |
   | Device or other IDs → **Device or other IDs** (push notification token) | Optional (only if notifications are allowed) | App functionality | No |
+  | Location → **Precise location** (farmers, only during a delivery run they started; latest point only, deleted when the run ends) | Optional | App functionality | **Yes**, with the customer the farmer is heading to |
   | Personal info → **Other info** (dietary preferences, farmer license numbers, references) | Optional | App functionality | No |
   | Financial info → **User payment info** | Optional (cash on pickup exists) | App functionality (card payments via Stripe) | No (Stripe is a service provider) |
   | Financial info → **Purchase history** | Required | App functionality | No |
@@ -300,7 +325,7 @@ All commands run in `harvesthub/app`.
 
 ### Store listing (Grow → Store presence → Main store listing)
 - [ ] **App name** (≤30 characters): `HarvestHub: Local Farm Market`
-- [ ] **Short description** (≤80): `Order fresh produce, eggs & more from local farms, then pick up at the farm.`
+- [ ] **Short description** (≤80): `Order fresh produce, eggs & more from local farms. Pick up or get it delivered.`
 - [ ] **Full description:**
   ```
   HarvestHub connects you with independent farms near you. See what's in season, order ahead, and pick up fresh food straight from the people who grow it.
@@ -319,8 +344,10 @@ All commands run in `harvesthub/app`.
   • List products with prices, stock and photos
   • Get each customer's name and phone number to arrange pickup
   • Mark orders ready, and track weekly earnings and payouts
+  • Deliver to customers nearby in your own delivery windows, with stops in route order
+  • Optionally share your live location while delivering, so the customer you're heading to can see you on the way (uses location in the background only during a delivery run you start)
 
-  Pickup only for now. HarvestHub is a marketplace: each farm is an independent business responsible for the products it sells.
+  Pickup or delivery, depending on the farm. HarvestHub is a marketplace: each farm is an independent business responsible for the products it sells.
   ```
 - [ ] **App icon:** `harvesthub/store-assets/play-icon-512.png`
 - [ ] **Feature graphic:** `harvesthub/store-assets/feature-graphic-1024x500.png`. A designed version with a tagline would look better, but this one meets the requirements.

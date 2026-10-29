@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -8,6 +8,7 @@ from app.delivery.schemas import (
     DeliveryOptionsOut,
     DeliverySettingsIn,
     DeliverySettingsOut,
+    LocationIn,
     MarkDeliveredIn,
     RunDetailOut,
     RunsOut,
@@ -61,6 +62,14 @@ def mark_delivered(
     farmer=Depends(get_current_farmer),
 ):
     return service.mark_delivered(db, farmer.id, run_id, stop_id, payload.photo_path, payload.note)
+
+
+@farmer_router.post("/runs/{run_id}/location", status_code=status.HTTP_204_NO_CONTENT)
+def report_location(run_id: str, payload: LocationIn, db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
+    # The farmer's phone during a run (live tracking, 0033). 409 once the run
+    # is over — the app stops sharing then.
+    service.record_location(db, farmer.id, run_id, payload.latitude, payload.longitude, payload.heading)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 customer_router = APIRouter(prefix="/delivery", tags=["delivery"])

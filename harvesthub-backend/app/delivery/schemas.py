@@ -131,3 +131,32 @@ class DeliveryProgressOut(BaseModel):
 
 class DeliveryPhotoOut(BaseModel):
     url: Optional[str]  # one-hour link; None if there's no photo
+
+
+# --- Live tracking (0033) -------------------------------------------------------------------
+
+
+class LocationIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    heading: Optional[float] = Field(default=None, ge=0, le=360)  # degrees from north
+
+
+class PointOut(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class FarmerPositionOut(PointOut):
+    heading: Optional[float]
+    updated_at: str
+    stale: bool  # no update for a few minutes (signal lost, phone off)
+
+
+class TrackingOut(BaseModel):
+    stage: Literal["scheduled", "on_the_way", "delivered", "cancelled"]
+    stops_before: Optional[int]
+    # Only for the customer who's next — before that it's just stops_before.
+    farmer: Optional[FarmerPositionOut]
+    destination: Optional[PointOut]  # their own stop
+    eta_minutes: Optional[int]  # rough: straight-line distance, typical speed
