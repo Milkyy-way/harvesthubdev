@@ -12,6 +12,9 @@ import { Manrope_800ExtraBold } from '@expo-google-fonts/manrope';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { resolveRedirect } from '../lib/routeGuard';
 import { usePushNotifications } from '../lib/pushNotifications';
+// Defines the background location task for live delivery tracking — it must
+// exist as soon as the app's JS starts, so it's imported here.
+import '../lib/liveLocation';
 import { colors } from '../constants/theme';
 
 const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY;

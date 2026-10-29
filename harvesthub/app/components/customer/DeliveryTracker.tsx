@@ -1,16 +1,23 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../constants/theme';
 import { apiClient } from '../../lib/apiClient';
-import type { DeliveryProgress } from '../../types/delivery';
+import { LiveDeliveryMap } from './LiveDeliveryMap';
+import type { DeliveryProgress, DeliveryTracking } from '../../types/delivery';
 
 type Props = {
   orderId: string;
   storeOrderId: string;
+  farmName: string;
   delivery: DeliveryProgress;
+  // The delivery moved on (delivered, cancelled) — reload the order.
+  onStageChange?: () => void;
 };
+
+const POLL_MS = 10_000;
 
 const STEPS = [
   { key: 'scheduled', label: 'Scheduled' },
@@ -23,23 +30,54 @@ function clock(iso: string): string {
 }
 
 // A delivery order's progress on the customer's order screen: where it is
-// (scheduled → on the way → delivered), how many stops are ahead, and the
-// farm's photo of where it was left.
-export function DeliveryTracker({ orderId, storeOrderId, delivery }: Props) {
+// (scheduled → on the way → delivered), how many stops are ahead, the
+// farmer on a live map once this customer is next, and the farm's photo of
+// where it was left. While on the way it polls the API every 10 s.
+export function DeliveryTracker({ orderId, storeOrderId, farmName, delivery, onStageChange }: Props) {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [loadingPhoto, setLoadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [tracking, setTracking] = useState<DeliveryTracking | null>(null);
+  const onStageChangeRef = useRef(onStageChange);
+  onStageChangeRef.current = onStageChange;
+
+  const onTheWay = delivery.stage === 'on_the_way';
+  useFocusEffect(
+    useCallback(() => {
+      if (!onTheWay) return;
+      let active = true;
+      const poll = () =>
+        apiClient.get<DeliveryTracking>(`/orders/${orderId}/store/${storeOrderId}/tracking`).then(
+          (res) => {
+            if (!active) return;
+            setTracking(res.data);
+            if (res.data.stage !== 'on_the_way') onStageChangeRef.current?.();
+          },
+          (err) => console.warn('Could not refresh delivery tracking:', err)
+        );
+      poll();
+      const timer = setInterval(poll, POLL_MS);
+      return () => {
+        active = false;
+        clearInterval(timer);
+      };
+    }, [onTheWay, orderId, storeOrderId])
+  );
 
   if (delivery.stage === 'cancelled') return null;
   const current = STEPS.findIndex((s) => s.key === delivery.stage);
+  const stopsBefore = tracking?.stops_before ?? delivery.stops_before;
+  const live = onTheWay && tracking?.farmer ? tracking : null;
 
   const message =
     delivery.stage === 'scheduled'
       ? "We'll let you know when it's on the way."
       : delivery.stage === 'on_the_way'
-        ? delivery.stops_before === 0
-          ? "You're next — the farm is heading to you now."
-          : `On the way — ${delivery.stops_before} stop${delivery.stops_before === 1 ? '' : 's'} before yours.`
+        ? stopsBefore === 0
+          ? live?.eta_minutes
+            ? `You're next — arriving in about ${live.eta_minutes} min.`
+            : "You're next — the farm is heading to you now."
+          : `On the way — ${stopsBefore} stop${stopsBefore === 1 ? '' : 's'} before yours.`
         : `Delivered${delivery.delivered_at ? ` at ${clock(delivery.delivered_at)}` : ''}.`;
 
   const showPhoto = async () => {
@@ -82,6 +120,14 @@ export function DeliveryTracker({ orderId, storeOrderId, delivery }: Props) {
       </View>
 
       <Text style={styles.message}>{message}</Text>
+      {live?.farmer ? (
+        <>
+          <LiveDeliveryMap farmer={live.farmer} destination={live.destination} farmName={farmName} />
+          {live.farmer.stale ? (
+            <Text style={styles.note}>Their location hasn&apos;t updated for a few minutes — they may have weak signal.</Text>
+          ) : null}
+        </>
+      ) : null}
       {delivery.note ? <Text style={styles.note}>From the farm: “{delivery.note}”</Text> : null}
 
       {delivery.stage === 'delivered' && delivery.has_photo ? (

@@ -73,6 +73,16 @@
           "cameraPermission": "HarvestHub uses the camera so farmers can take a photo of where they left a delivery.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "HarvestHub uses your location while you deliver, so the customer you are heading to can see you are on the way.",
+          "locationAlwaysAndWhenInUsePermission": "While a delivery run is in progress, HarvestHub shares your location with the customer you are heading to, even when the app is in the background. It stops when the run ends.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
       ]
     ],
     "experiments": {

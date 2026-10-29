@@ -199,6 +199,7 @@ export default function OrderDetailScreen() {
             onMarkReceived={() => confirmMarkReceived(storeOrder)}
             onRate={(rating) => rateStore(storeOrder.id, rating)}
             ratingBusy={ratingStoreOrderId === storeOrder.id}
+            onDeliveryUpdate={loadOrder}
           />
         )}
         ListFooterComponent={

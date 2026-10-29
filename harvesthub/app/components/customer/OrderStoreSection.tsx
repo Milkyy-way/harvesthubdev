@@ -14,6 +14,7 @@ type Props = {
   onMarkReceived: () => void;
   onRate: (rating: number) => void;
   ratingBusy: boolean;
+  onDeliveryUpdate?: () => void; // the delivery moved on — reload the order
 };
 
 const STATUS_LABELS: Record<StoreOrder['status'], string> = {
@@ -34,7 +35,17 @@ const STATUS_COLORS: Record<StoreOrder['status'], string> = {
   cancelled: colors.danger,
 };
 
-export function OrderStoreSection({ orderId, storeOrder, paysAtPickup, busy, onCancel, onMarkReceived, onRate, ratingBusy }: Props) {
+export function OrderStoreSection({
+  orderId,
+  storeOrder,
+  paysAtPickup,
+  busy,
+  onCancel,
+  onMarkReceived,
+  onRate,
+  ratingBusy,
+  onDeliveryUpdate,
+}: Props) {
   const isDelivery = storeOrder.fulfillment_method === 'delivery';
   const addressLine =
     storeOrder.fulfillment_method === 'pickup'
@@ -95,7 +106,13 @@ export function OrderStoreSection({ orderId, storeOrder, paysAtPickup, busy, onC
       </View>
 
       {isDelivery && storeOrder.delivery && storeOrder.status !== 'pending_payment' ? (
-        <DeliveryTracker orderId={orderId} storeOrderId={storeOrder.id} delivery={storeOrder.delivery} />
+        <DeliveryTracker
+          orderId={orderId}
+          storeOrderId={storeOrder.id}
+          farmName={storeOrder.farm_name}
+          delivery={storeOrder.delivery}
+          onStageChange={onDeliveryUpdate}
+        />
       ) : null}
 
       <View style={styles.items}>

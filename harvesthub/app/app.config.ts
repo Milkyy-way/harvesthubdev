@@ -9,6 +9,13 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 const googleServicesFile = process.env.GOOGLE_SERVICES_JSON ?? './google-services.json';
 const hasGoogleServices = fs.existsSync(googleServicesFile);
 
+// The live delivery map (react-native-maps) uses Google Maps on Android, which
+// needs a "Maps SDK for Android" key in the app. It's restricted to this
+// app's package and signing certificate in Google Cloud, so it's fine to ship.
+// Without it the app shows the arrival estimate as text instead of a map
+// (components/customer/LiveDeliveryMap.tsx). iPhones use Apple Maps — no key.
+const googleMapsAndroidKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY;
+
 // app.json holds the real (production) app: "HarvestHub",
 // com.harvesthubmarket.app, harvesthub:// links. The development build is
 // a separate app — "HarvestHub Dev", its own package id and link scheme —
@@ -20,9 +27,14 @@ const hasGoogleServices = fs.existsSync(googleServicesFile);
 const variant = process.env.APP_VARIANT === 'development' ? 'development' : 'production';
 
 export default ({ config: baseConfig }: ConfigContext): ExpoConfig => {
-  const config = hasGoogleServices
-    ? { ...baseConfig, android: { ...baseConfig.android, googleServicesFile } }
-    : baseConfig;
+  const config = {
+    ...baseConfig,
+    android: {
+      ...baseConfig.android,
+      ...(hasGoogleServices ? { googleServicesFile } : {}),
+      ...(googleMapsAndroidKey ? { config: { ...baseConfig.android?.config, googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
+    },
+  };
 
   if (variant === 'production') {
     // On an EAS build server (EAS_BUILD is set there), fail the build rather

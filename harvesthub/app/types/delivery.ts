@@ -83,6 +83,17 @@ export interface FarmDeliveryOption {
   slots: DeliverySlot[];
 }
 
+// Live tracking — GET /orders/{id}/store/{storeOrderId}/tracking, polled
+// while a delivery is on its way. The farmer's position only for the
+// customer who's next.
+export interface DeliveryTracking {
+  stage: 'scheduled' | 'on_the_way' | 'delivered' | 'cancelled';
+  stops_before: number | null;
+  farmer: { latitude: number; longitude: number; heading: number | null; updated_at: string; stale: boolean } | null;
+  destination: { latitude: number; longitude: number } | null;
+  eta_minutes: number | null;
+}
+
 export interface DeliveryProgress {
   window_label: string;
   window_starts_at: string;

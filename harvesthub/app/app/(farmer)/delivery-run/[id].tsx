@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,13 @@ import { apiClient } from '../../../lib/apiClient';
 import { apiErrorMessage } from '../../../lib/apiError';
 import { openDrivingDirections } from '../../../lib/maps';
 import { takeDeliveryPhoto, uploadDeliveryPhoto } from '../../../lib/deliveryPhoto';
+import {
+  isSharingLocation,
+  startSharingLocation,
+  stopSharingLocation,
+  watchWhileOpen,
+  type SharingMode,
+} from '../../../lib/liveLocation';
 import { useAuth } from '../../../contexts/AuthContext';
 import { TextField } from '../../../components/TextField';
 import { CancelOrderSheet, type CancellableOrder } from '../../../components/farmer/CancelOrderSheet';
@@ -32,9 +39,30 @@ function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+// Google Play's "prominent disclosure": said in the app, before the system
+// location prompt — what's collected, that it continues in the background,
+// who sees it and why.
+function askToShareLocation(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Share your location while you deliver?',
+      'HarvestHub collects your location while this delivery run is in progress — including when the app is closed or ' +
+        'in the background — and shows it to the customer you’re heading to next, so they know when you’ll arrive. ' +
+        'It isn’t used for anything else, and sharing stops when the run ends.',
+      [
+        { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Share location', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
+}
+
 // One delivery run: start it (customers are told it's on the way, stops are
-// put in route order), then deliver stop by stop — navigate, call, mark
-// delivered with an optional photo, or "Couldn't deliver" (cancel + refund).
+// put in route order, and — if the farmer agrees — their location is shared
+// with the customer who's next), then deliver stop by stop: navigate, call,
+// mark delivered with an optional photo, or "Couldn't deliver" (cancel +
+// refund).
 export default function DeliveryRunScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -47,6 +75,9 @@ export default function DeliveryRunScreen() {
   const [delivering, setDelivering] = useState<Stop | null>(null);
   const [failing, setFailing] = useState<StopOrder | null>(null);
   const [failingBusy, setFailingBusy] = useState(false);
+  // Live tracking: 'background' = the foreground service is running;
+  // 'foreground_only' = no "allow all the time", so only while this screen is open.
+  const [sharing, setSharing] = useState<SharingMode | 'off'>('off');
 
   const load = useCallback(
     () =>
@@ -66,6 +97,57 @@ export default function DeliveryRunScreen() {
     }, [load])
   );
 
+  // Back on this screen (or after a restart): is the background sharing still on?
+  const runStatus = run?.status;
+  useEffect(() => {
+    if (runStatus === 'in_progress') {
+      isSharingLocation(String(id)).then((on) => {
+        if (on) setSharing('background');
+      });
+    } else if (runStatus === 'completed') {
+      // The last stop is done — stop sharing (the API refuses positions now anyway).
+      stopSharingLocation();
+      setSharing('off');
+    }
+  }, [runStatus, id]);
+
+  // Without background permission, share while this screen is open.
+  useEffect(() => {
+    if (sharing !== 'foreground_only' || runStatus !== 'in_progress') return;
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    watchWhileOpen(String(id), () => setSharing('off')).then((fn) => {
+      if (cancelled) fn();
+      else stop = fn;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [sharing, runStatus, id]);
+
+  const shareLocation = async () => {
+    if (!(await askToShareLocation())) return;
+    const mode = await startSharingLocation(String(id));
+    setSharing(mode === 'denied' ? 'off' : mode);
+    if (mode === 'denied') {
+      Alert.alert(
+        'Location is off',
+        'Customers will still see how many stops are before theirs. To share your location, allow it for HarvestHub in your phone settings.'
+      );
+    } else if (mode === 'foreground_only') {
+      Alert.alert(
+        'Sharing while HarvestHub is open',
+        'Without “Allow all the time”, your location updates only while this screen is open — not while you’re in Google Maps.'
+      );
+    }
+  };
+
+  const stopSharing = async () => {
+    await stopSharingLocation();
+    setSharing('off');
+  };
+
   const start = () => {
     Alert.alert('Start delivering?', "We'll tell each customer their order is on the way, in route order.", [
       { text: 'Not yet', style: 'cancel' },
@@ -78,9 +160,11 @@ export default function DeliveryRunScreen() {
             setRun(res.data);
           } catch (err) {
             Alert.alert("Couldn't start", apiErrorMessage(err, 'Please try again.'));
+            return;
           } finally {
             setStarting(false);
           }
+          await shareLocation();
         },
       },
     ]);
@@ -155,6 +239,24 @@ export default function DeliveryRunScreen() {
               ) : (
                 <Text style={styles.hint}>You can start this run on its delivery day. Pack the orders below before you go.</Text>
               )
+            ) : run.status === 'in_progress' ? (
+              <View style={[styles.shareBanner, sharing === 'off' && styles.shareBannerOff]}>
+                <MaterialIcons
+                  name={sharing === 'off' ? 'location-off' : 'my-location'}
+                  size={20}
+                  color={sharing === 'off' ? colors.textMuted : colors.primary}
+                />
+                <Text style={styles.shareText}>
+                  {sharing === 'background'
+                    ? 'Sharing your location with the customer you’re heading to.'
+                    : sharing === 'foreground_only'
+                      ? 'Sharing your location while this screen is open.'
+                      : 'Your location isn’t being shared. Customers see how many stops are before theirs.'}
+                </Text>
+                <Pressable onPress={sharing === 'off' ? shareLocation : stopSharing} hitSlop={8}>
+                  <Text style={styles.shareAction}>{sharing === 'off' ? 'Share' : 'Stop'}</Text>
+                </Pressable>
+              </View>
             ) : run.status === 'completed' ? (
               <View style={styles.doneBanner}>
                 <MaterialIcons name="check-circle" size={20} color={colors.primary} />
@@ -405,6 +507,18 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   doneText: { flex: 1, fontSize: 13.5, color: colors.primaryDark, fontWeight: '600' },
+  shareBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.tint,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
+  },
+  shareBannerOff: { backgroundColor: colors.border },
+  shareText: { flex: 1, fontSize: 13, lineHeight: 18, color: colors.text },
+  shareAction: { fontSize: 13.5, fontWeight: '800', color: colors.primary },
   stop: { paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   stopCancelled: { opacity: 0.55 },
   stopHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
