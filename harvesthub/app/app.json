@@ -54,7 +54,7 @@
       [
         "@stripe/stripe-react-native",
         {
-          "merchantIdentifier": "merchant.com.harvesthub.app",
+          "merchantIdentifier": "merchant.com.harvesthubmarket.app",
           "enableGooglePay": true
         }
       ],
@@ -69,7 +69,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": false,
+          "photosPermission": "HarvestHub only uses the camera, to photograph where a delivery was left. It does not browse your photo library.",
           "cameraPermission": "HarvestHub uses the camera so farmers can take a photo of where they left a delivery.",
           "microphonePermission": false
         }
@@ -81,7 +81,8 @@
           "locationAlwaysAndWhenInUsePermission": "While a delivery run is in progress, HarvestHub shares your location with the customer you are heading to, even when the app is in the background. It stops when the run ends.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
-          "isIosBackgroundLocationEnabled": true
+          "isIosBackgroundLocationEnabled": true,
+          "locationAlwaysPermission": "While a delivery run is in progress, HarvestHub shares your location with the customer you are heading to, even when the app is in the background. It stops when the run ends."
         }
       ]
     ],

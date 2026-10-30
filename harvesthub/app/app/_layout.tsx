@@ -87,7 +87,7 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <StripeProvider publishableKey={stripePublishableKey!} merchantIdentifier="merchant.com.harvesthub.app">
+    <StripeProvider publishableKey={stripePublishableKey!} merchantIdentifier="merchant.com.harvesthubmarket.app">
       <AuthProvider>
         {/* Dark status-bar text everywhere: every screen now sits on the
             light cream background (the welcome screen sets its own). */}
