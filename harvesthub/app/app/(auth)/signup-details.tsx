@@ -7,9 +7,11 @@ import AntDesign from '@expo/vector-icons/AntDesign';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/googleAuth';
+import { signInWithApple } from '../../lib/appleAuth';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import type { UserRole } from '../../types/database';
 import { customerSignupSchema, farmerAccountSchema, flattenFieldErrors } from '../../lib/validation/schemas';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
 import { CustomerFields, initialCustomerFormValues, type CustomerFormValues } from '../../components/signup/CustomerFields';
 import {
   FarmerAccountFields,
@@ -30,6 +32,7 @@ export default function SignupDetails() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // With "Confirm email" off in Supabase, signUp signs the user straight in
@@ -50,14 +53,18 @@ export default function SignupDetails() {
   const updateCustomer = (patch: Partial<CustomerFormValues>) => setCustomerValues((prev) => ({ ...prev, ...patch }));
   const updateFarmer = (patch: Partial<FarmerAccountFormValues>) => setFarmerValues((prev) => ({ ...prev, ...patch }));
 
-  const handleGoogleSignUp = async () => {
+  const handleSocialSignUp = async (
+    provider: 'Google' | 'Apple',
+    signIn: () => Promise<Session | null>,
+    setBusy: (busy: boolean) => void
+  ) => {
     setError(null);
-    setGoogleLoading(true);
+    setBusy(true);
     try {
-      const session = await signInWithGoogle();
-      if (!session) return; // cancelled the Google sheet
+      const session = await signIn();
+      if (!session) return; // cancelled the sign-in sheet
 
-      // Google sign-up is customer-only (farmers use email/password — see
+      // Google/Apple sign-up is customer-only (farmers use email/password — see
       // 0022). Go straight to the customer details form, but only if this
       // account genuinely doesn't have a role yet: an existing account
       // (this email already signed up before) keeps its real role.
@@ -67,13 +74,13 @@ export default function SignupDetails() {
       }
       // else: either already fully set up, or somehow already has this
       // role's row started — RootLayout's own redirect effect (which
-      // reacts to the session/profile change from signInWithGoogle
+      // reacts to the session/profile change from the sign-in
       // itself) sends them wherever they actually belong.
     } catch (err: any) {
-      console.warn('Could not sign up with Google:', err);
-      setError(err?.message ?? 'Could not sign up with Google.');
+      console.warn(`Could not sign up with ${provider}:`, err);
+      setError(err?.message ?? `Could not sign up with ${provider}.`);
     } finally {
-      setGoogleLoading(false);
+      setBusy(false);
     }
   };
 
@@ -188,7 +195,11 @@ export default function SignupDetails() {
 
         {role === 'customer' ? (
           <>
-            <Pressable style={styles.googleButton} onPress={handleGoogleSignUp} disabled={googleLoading}>
+            <Pressable
+              style={styles.googleButton}
+              onPress={() => handleSocialSignUp('Google', signInWithGoogle, setGoogleLoading)}
+              disabled={googleLoading}
+            >
               {googleLoading ? (
                 <ActivityIndicator color={colors.text} />
               ) : (
@@ -198,6 +209,12 @@ export default function SignupDetails() {
                 </>
               )}
             </Pressable>
+
+            <AppleSignInButton
+              mode="signUp"
+              busy={appleLoading}
+              onPress={() => handleSocialSignUp('Apple', signInWithApple, setAppleLoading)}
+            />
 
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />

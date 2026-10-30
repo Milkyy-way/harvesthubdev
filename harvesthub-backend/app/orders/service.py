@@ -17,6 +17,7 @@ from app.checkout.service import build_checkout_preview
 from app.checkout.schemas import CheckoutGroupRequest
 from app.orders.schemas import CreateOrderRequest
 from app.payouts import service as payouts_service
+from app.promotions import service as promotions_service
 from app.ratings import service as ratings_service
 from app.ratings.schemas import SubmitRatingRequest
 from app.cart.service import _cart_totals
@@ -191,8 +192,9 @@ def _validate_stock(db: Session, groups: list[dict]) -> None:
 
 
 def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) -> None:
-    """The point of no return for one order: decrement real stock and drop
-    the ordered items from the customer's active cart. Deliberately NOT
+    """The point of no return for one order: decrement real stock, count its
+    promo codes as used, and drop the ordered items from the customer's
+    active cart. Deliberately NOT
     called at order-creation time for card payments — only once payment is
     actually confirmed (see _finalize_successful_payment) — so a declined
     or abandoned payment never locks stock or empties a cart for nothing.
@@ -211,6 +213,7 @@ def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) ->
         .all()
     )
     for so in store_orders:
+        promotions_service.record_promo_use(db, so.farmer_id, so.promo_code)
         items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id).all()
         for item in items:
             if item.product_id:
@@ -501,7 +504,10 @@ def _stock_was_taken(payment: Payment | None, store_order: StoreOrder) -> bool:
     )
 
 
-def _restore_inventory(db: Session, store_order: StoreOrder) -> None:
+def _restore_stock_and_promo(db: Session, store_order: StoreOrder) -> None:
+    """Undoes _commit_inventory_and_clear_cart for one cancelled store order:
+    the stock goes back and the promo code gets its use back."""
+    promotions_service.release_promo_use(db, store_order.farmer_id, store_order.promo_code)
     items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == store_order.id).all()
     for item in items:
         if item.product_id:
@@ -618,7 +624,7 @@ def _cancel_one_store_order(
             payment.amount = new_amount
 
     if stock_taken:
-        _restore_inventory(db, store_order)
+        _restore_stock_and_promo(db, store_order)
     store_order.status = "cancelled"
     db.add(_record_cancellation(order.id, store_order.id, cancelled_by, cancelled_by_role, reason))
     _sync_cash_payment_status(db, order.id, payment)
@@ -649,7 +655,7 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
     for so in refundable:
         _refund_store_order(db, payment, so, reason)
         payouts_service.handle_refund_ledger_adjustment(db, so)
-        _restore_inventory(db, so)  # paid/completed always had its stock taken
+        _restore_stock_and_promo(db, so)  # paid/completed always had its stock taken
         so.status = "cancelled"
         db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
 
@@ -663,7 +669,7 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
             db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason=reason))
         for so in pending:
             if _stock_was_taken(payment, so):  # cash orders take stock at placement
-                _restore_inventory(db, so)
+                _restore_stock_and_promo(db, so)
             so.status = "cancelled"
             db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
 

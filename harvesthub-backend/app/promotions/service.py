@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.promotions.models import PromoCode
 
@@ -49,3 +50,21 @@ def apply_promo(db: Session, farmer_id: str, code: str | None, subtotal: float) 
     discount = min(discount, subtotal)  # never discount past $0
 
     return round(discount, 2), promo.code, None
+
+
+def record_promo_use(db: Session, farmer_id, code: str | None) -> None:
+    """Counts one use of a code, once its order is really placed. A single
+    UPDATE, so two orders finishing together can't lose a count. Does NOT
+    commit."""
+    if code:
+        db.query(PromoCode).filter(PromoCode.farmer_id == farmer_id, PromoCode.code == code).update(
+            {PromoCode.times_used: PromoCode.times_used + 1}, synchronize_session=False
+        )
+
+
+def release_promo_use(db: Session, farmer_id, code: str | None) -> None:
+    """Gives a use back when a placed order is cancelled. Does NOT commit."""
+    if code:
+        db.query(PromoCode).filter(PromoCode.farmer_id == farmer_id, PromoCode.code == code).update(
+            {PromoCode.times_used: func.greatest(PromoCode.times_used - 1, 0)}, synchronize_session=False
+        )

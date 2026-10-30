@@ -10,8 +10,7 @@ import { supabase } from './supabase';
 // openAuthSessionAsync can hang after a successful login.
 WebBrowser.maybeCompleteAuthSession();
 
-// Google only for now — no Apple Developer account exists yet to register
-// Sign in with Apple against, so that button isn't wired up until it does.
+// Sign in with Apple lives in lib/appleAuth.ts (native, no browser involved).
 export async function signInWithGoogle() {
   const redirectTo = Linking.createURL('auth-callback');
 

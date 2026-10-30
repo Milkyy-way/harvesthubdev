@@ -3,11 +3,14 @@ import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert,
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AntDesign from '@expo/vector-icons/AntDesign';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle, isFirstEverSignIn } from '../../lib/googleAuth';
+import { signInWithApple } from '../../lib/appleAuth';
 import { resendSignupCode } from '../../lib/emailVerification';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { Logo } from '../../components/Logo';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
 
 export default function Login() {
   const router = useRouter();
@@ -17,6 +20,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async () => {
@@ -46,21 +50,25 @@ export default function Login() {
     // session and redirects to the right role's home screen automatically.
   };
 
-  const handleGoogleSignIn = async () => {
+  const handleSocialSignIn = async (
+    provider: 'Google' | 'Apple',
+    signIn: () => Promise<Session | null>,
+    setBusy: (busy: boolean) => void
+  ) => {
     setError(null);
-    setGoogleLoading(true);
+    setBusy(true);
     try {
-      const session = await signInWithGoogle();
-      if (!session) return; // cancelled the Google sheet — nothing to show
+      const session = await signIn();
+      if (!session) return; // cancelled the sign-in sheet — nothing to show
 
       if (isFirstEverSignIn(session)) {
-        // This Google account has never signed in here before — the Login
+        // This Google/Apple account has never signed in here before — the Login
         // screen shouldn't silently create one (that's what Sign Up is
         // for). Undo it and send them there instead.
         await supabase.auth.signOut();
         Alert.alert(
           "We don't have that account yet",
-          'No HarvestHub account is linked to that Google email. Sign up first, or log in with the email and password you already registered.',
+          `No HarvestHub account is linked to that ${provider} account. Sign up first, or log in with the email and password you already registered.`,
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Sign Up', onPress: () => router.push('/(auth)/signup') },
@@ -72,10 +80,10 @@ export default function Login() {
       // role-setup) — RootLayout's own auth listener takes it from here,
       // same as the password path above.
     } catch (err: any) {
-      console.warn('Could not sign in with Google:', err);
-      setError(err?.message ?? 'Could not sign in with Google.');
+      console.warn(`Could not sign in with ${provider}:`, err);
+      setError(err?.message ?? `Could not sign in with ${provider}.`);
     } finally {
-      setGoogleLoading(false);
+      setBusy(false);
     }
   };
 
@@ -133,7 +141,11 @@ export default function Login() {
           <View style={styles.dividerLine} />
         </View>
 
-        <Pressable style={styles.googleButton} onPress={handleGoogleSignIn} disabled={googleLoading}>
+        <Pressable
+          style={styles.googleButton}
+          onPress={() => handleSocialSignIn('Google', signInWithGoogle, setGoogleLoading)}
+          disabled={googleLoading}
+        >
           {googleLoading ? (
             <ActivityIndicator color={colors.text} />
           ) : (
@@ -143,6 +155,12 @@ export default function Login() {
             </>
           )}
         </Pressable>
+
+        <AppleSignInButton
+          mode="continue"
+          busy={appleLoading}
+          onPress={() => handleSocialSignIn('Apple', signInWithApple, setAppleLoading)}
+        />
       </View>
     </KeyboardAvoidingView>
   );

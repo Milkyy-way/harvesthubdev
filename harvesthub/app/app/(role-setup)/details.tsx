@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
@@ -10,14 +10,14 @@ import { TagSelector } from '../../components/TagSelector';
 import { DIETARY_PREFERENCE_OPTIONS, PRODUCE_INTEREST_OPTIONS } from '../../lib/validation/schemas';
 import type { DietaryPreference, ProduceInterest } from '../../types/database';
 
-// Only ever reached with a Google session that has an identity (name/email
-// came from Google) but no role yet. Google sign-up is customer-only —
+// Only ever reached with a Google or Apple session that has an identity
+// (name/email came from them) but no role yet. That sign-up is customer-only —
 // farmers sign up with email/password (see 0022) — so this just asks for
 // whatever a customer account still needs. Submits through
 // complete_profile_setup() (0018/0022), the one place allowed to set
 // role/status directly.
 export default function RoleSetupDetails() {
-  const { profile, refreshProfile } = useAuth();
+  const { session, profile, refreshProfile } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [fullName, setFullName] = useState(profile?.full_name ?? '');
@@ -30,6 +30,13 @@ export default function RoleSetupDetails() {
   const [produceInterests, setProduceInterests] = useState<ProduceInterest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Apple's name isn't on the profile: lib/appleAuth.ts saves it on the session
+  // just after sign-in, which can land after this screen has opened.
+  const nameFromSignIn: string | undefined = session?.user.user_metadata?.full_name;
+  useEffect(() => {
+    if (nameFromSignIn) setFullName((current) => current || nameFromSignIn);
+  }, [nameFromSignIn]);
 
   const handleSubmit = async () => {
     if (loading) return; // already submitting — a second tap while it's in flight must not fire this twice

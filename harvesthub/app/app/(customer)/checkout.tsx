@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, Pressable, Alert, Platform, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -135,6 +135,14 @@ export default function CheckoutScreen() {
       const { error: initError } = await initPaymentSheet({
         merchantDisplayName: 'HarvestHub',
         paymentIntentClientSecret: client_secret,
+        // Stripe only offers these on phones set up for them. Still a card
+        // payment as far as the order is concerned.
+        applePay: { merchantCountryCode: 'US' },
+        googlePay: {
+          merchantCountryCode: 'US',
+          currencyCode: 'USD',
+          testEnv: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith('pk_test_'),
+        },
       });
       if (initError) {
         Alert.alert('Could not start payment', initError.message);
@@ -210,7 +218,7 @@ export default function CheckoutScreen() {
             <Text style={styles.paymentTitle}>Payment method</Text>
             <PaymentOption
               icon="credit-card"
-              label="Card / Apple Pay / Google Pay"
+              label={Platform.OS === 'ios' ? 'Card or Apple Pay' : 'Card or Google Pay'}
               selected={paymentMethod === 'card'}
               onPress={() => setPaymentMethod('card')}
             />

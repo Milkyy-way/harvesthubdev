@@ -135,11 +135,11 @@ Create a **new** project for production, separate from the one you develop on, s
   ```
   - Get the connection string from Project Settings → Database → Connection string → **Session pooler**, with your password filled in.
   - The script uses `psql` from your PostgreSQL install, applies all migrations in order, and **skips the sample farms**. It's safe to run again.
-- [ ] Also bring your **development** project up to date (it needs the new `0033` — live tracking):
+- [ ] Also bring your **development** project up to date (it needs the new `0034` — ratings can only be written through the API):
   ```
-  node supabase/apply-migrations.mjs "<dev connection string>" --from 0033
+  node supabase/apply-migrations.mjs "<dev connection string>" --from 0034
   ```
-  If you haven't applied 0032 (farm delivery, which also creates the private `delivery-photos` bucket) there yet, use `--from 0032` (every migration is safe to run again).
+  If you haven't applied 0032 (farm delivery, which also creates the private `delivery-photos` bucket) or 0033 (live tracking) there yet, start from the first one you're missing, e.g. `--from 0032` (every migration is safe to run again).
 - [ ] Check the extensions (Database → Extensions): **pg_cron** should be on (the migration turns it on). pg_net isn't needed any more (farmer emails now come from the backend).
 
 ### Authentication settings (production project)
@@ -243,6 +243,8 @@ Any host that runs a Dockerfile works. **Render** is the simplest:
   - Events: `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, and for Harvest Pass `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `invoice.paid`, `invoice.payment_failed`.
   - Copy the signing secret (`whsec_...`) into the backend's `STRIPE_WEBHOOK_SECRET`.
 - [ ] Keep test keys in your development `.env` files. Live keys go **only** on Render and in EAS.
+- [ ] **Google Pay:** check it's on under Stripe → Settings → Payment methods, and request production access in the Google Pay & Wallet Console. The app turns off Google's test mode by itself when built with a `pk_live_` key.
+- [ ] **Apple Pay:** check that your Apple Pay certificate also shows in Stripe's live mode. If it doesn't, repeat the certificate step there.
 
 ---
 
