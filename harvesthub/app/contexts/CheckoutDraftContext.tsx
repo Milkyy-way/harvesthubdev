@@ -2,15 +2,16 @@ import React, { createContext, useCallback, useContext, useState } from 'react';
 import type { FarmFulfillment, FulfillmentMethod } from '../types/checkout';
 
 // Every farm starts on pickup — nothing to tap before checkout is ready.
-// Delivery (farms that offer it, to the customer's saved address) needs a
-// window chosen too.
-const PICKUP: FarmFulfillment = { method: 'pickup', deliverySlot: null };
+// Delivery (farms that offer it, to the customer's saved address or their
+// pod's drop point) needs a window chosen too.
+const PICKUP: FarmFulfillment = { method: 'pickup', deliverySlot: null, podId: null };
 
 type CheckoutDraftContextType = {
   fulfillmentByFarm: Record<string, FarmFulfillment>;
   ensureFarm: (farmerId: string) => void;
   setMethod: (farmerId: string, method: FulfillmentMethod) => void;
   setDeliverySlot: (farmerId: string, startsAt: string | null) => void;
+  setPod: (farmerId: string, podId: string | null) => void;
 };
 
 const CheckoutDraftContext = createContext<CheckoutDraftContextType>({
@@ -18,6 +19,7 @@ const CheckoutDraftContext = createContext<CheckoutDraftContextType>({
   ensureFarm: () => {},
   setMethod: () => {},
   setDeliverySlot: () => {},
+  setPod: () => {},
 });
 
 // Session-local, in-memory only — this is a draft of "how will each
@@ -40,8 +42,13 @@ export function CheckoutDraftProvider({ children }: { children: React.ReactNode 
     setFulfillmentByFarm((prev) => ({ ...prev, [farmerId]: { ...(prev[farmerId] ?? PICKUP), deliverySlot: startsAt } }));
   }, []);
 
+  // A pod has its own windows, so changing the destination clears the choice.
+  const setPod = useCallback((farmerId: string, podId: string | null) => {
+    setFulfillmentByFarm((prev) => ({ ...prev, [farmerId]: { ...(prev[farmerId] ?? PICKUP), podId, deliverySlot: null } }));
+  }, []);
+
   return (
-    <CheckoutDraftContext.Provider value={{ fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot }}>
+    <CheckoutDraftContext.Provider value={{ fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot, setPod }}>
       {children}
     </CheckoutDraftContext.Provider>
   );

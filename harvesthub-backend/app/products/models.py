@@ -17,4 +17,6 @@ class Product(Base):
     image_url = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     tax_category = Column(String, nullable=False, default="raw")  # 'raw' | 'prepared' — see app/core/tax.py
+    # Left at a pod's drop point, this needs collecting soon (0035).
+    keep_cold = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)  # powers the Home feed's "just picked" harvest tag

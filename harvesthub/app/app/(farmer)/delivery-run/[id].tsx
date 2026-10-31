@@ -305,6 +305,8 @@ function StopCard({
 }) {
   const active = stop.status === 'en_route';
   const order = stop.orders[0];
+  const isPod = stop.kind === 'pod';
+  const liveOrders = stop.orders.filter((o) => o.status !== 'cancelled');
   const badge =
     stop.status === 'delivered' ? (
       <MaterialIcons name="check" size={16} color={colors.white} />
@@ -327,15 +329,35 @@ function StopCard({
           {badge}
         </View>
         <View style={styles.flex1}>
-          <Text style={styles.customer}>{order?.customer_name ?? 'Customer'}</Text>
+          <Text style={styles.customer}>
+            {isPod ? `${stop.pod_name ?? 'Pod'} drop point · ${liveOrders.length} order${liveOrders.length === 1 ? '' : 's'}` : (order?.customer_name ?? 'Customer')}
+          </Text>
           {stop.address_line ? <Text style={styles.address}>{stop.address_line}</Text> : null}
+          {stop.shelter_note ? <Text style={styles.address}>Leave at: {stop.shelter_note}</Text> : null}
+          {stop.access_notes ? <Text style={styles.address}>Access: {stop.access_notes}</Text> : null}
         </View>
       </View>
 
       {stop.orders.map((o) => (
-        <Text key={o.store_order_id} style={styles.items}>
-          {o.items.map((i) => `${i.quantity} × ${i.product_name}`).join(', ')}
-        </Text>
+        <View key={o.store_order_id}>
+          <Text style={styles.items}>
+            {isPod ? <Text style={styles.podCustomer}>{o.customer_name ?? 'Customer'}: </Text> : null}
+            {o.items.map((i) => `${i.quantity} × ${i.product_name}${i.keep_cold ? ' (cold)' : ''}`).join(', ')}
+            {o.status === 'cancelled' ? ' · cancelled' : ''}
+          </Text>
+          {isPod && active && o.status !== 'cancelled' ? (
+            <View style={styles.podOrderActions}>
+              {o.customer_phone ? (
+                <Pressable onPress={() => Linking.openURL(`tel:${o.customer_phone}`)} hitSlop={8}>
+                  <Text style={styles.podLink}>Call</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => onCantDeliver(o)} hitSlop={8}>
+                <Text style={styles.podLinkDanger}>Couldn&apos;t deliver</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
       ))}
 
       {stop.status === 'delivered' ? (
@@ -359,7 +381,7 @@ function StopCard({
             <MaterialIcons name="navigation" size={16} color={colors.primary} />
             <Text style={styles.actionText}>Navigate</Text>
           </Pressable>
-          {order?.customer_phone ? (
+          {!isPod && order?.customer_phone ? (
             <Pressable style={styles.actionButton} onPress={() => Linking.openURL(`tel:${order.customer_phone}`)}>
               <MaterialIcons name="phone" size={16} color={colors.primary} />
               <Text style={styles.actionText}>Call</Text>
@@ -370,9 +392,11 @@ function StopCard({
 
       {active ? (
         <View style={styles.actions}>
-          <Pressable style={styles.failButton} onPress={() => order && onCantDeliver(order)}>
-            <Text style={styles.failText}>Couldn&apos;t deliver</Text>
-          </Pressable>
+          {!isPod ? (
+            <Pressable style={styles.failButton} onPress={() => order && onCantDeliver(order)}>
+              <Text style={styles.failText}>Couldn&apos;t deliver</Text>
+            </Pressable>
+          ) : null}
           <Pressable style={styles.deliverButton} onPress={onDelivered}>
             <Text style={styles.deliverText}>Delivered</Text>
           </Pressable>
@@ -438,8 +462,14 @@ function DeliveredSheet({
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
         <Pressable style={styles.flex1} onPress={close} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
-          <Text style={styles.sheetTitle}>Delivered to {stop?.orders[0]?.customer_name ?? 'the customer'}?</Text>
-          <Text style={styles.sheetBody}>Add a photo of where you left it — the customer sees it in the app. Optional.</Text>
+          <Text style={styles.sheetTitle}>
+            Delivered to {stop?.kind === 'pod' ? `${stop.pod_name ?? 'the pod'}'s drop point` : (stop?.orders[0]?.customer_name ?? 'the customer')}?
+          </Text>
+          <Text style={styles.sheetBody}>
+            {stop?.kind === 'pod'
+              ? 'This completes every order at this stop. Add a photo of where you left them; members see it in the app. Optional.'
+              : 'Add a photo of where you left it — the customer sees it in the app. Optional.'}
+          </Text>
 
           {photoUri ? (
             <Pressable onPress={takePhoto} accessibilityLabel="Retake photo">
@@ -538,6 +568,10 @@ const styles = StyleSheet.create({
   items: { fontSize: 13, color: colors.text, marginTop: spacing.xs, marginLeft: 28 + spacing.sm },
   deliveredText: { fontSize: 12.5, color: colors.primaryDark, fontWeight: '600', marginTop: spacing.xs, marginLeft: 28 + spacing.sm },
   cancelledText: { fontSize: 12.5, color: colors.danger, marginTop: spacing.xs, marginLeft: 28 + spacing.sm },
+  podCustomer: { fontWeight: '700' },
+  podOrderActions: { flexDirection: 'row', gap: spacing.md, marginTop: 3, marginLeft: 28 + spacing.sm },
+  podLink: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
+  podLinkDanger: { fontSize: 12.5, fontWeight: '700', color: colors.danger },
   actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   actionButton: {
     flexDirection: 'row',

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.membership import service as membership_service
 from app.notifications.service import Notice, notify_many
+from app.pods.models import PodMember
 
 _ALREADY_SENT = "not exists (select 1 from notifications n where n.dedupe_key = {key})"
 
@@ -51,7 +52,13 @@ def _free_period_ending(db: Session) -> int:
             Notice(
                 customer_id,
                 "free_period_ending",
-                {"ends_at": ends_at, "joined": joined, "first_charge": float(membership.price_amount) if joined else None},
+                {
+                    "ends_at": ends_at,
+                    "joined": joined,
+                    "first_charge": float(membership.price_amount) if joined else None,
+                    "in_pod": db.query(PodMember.id).filter(PodMember.customer_id == customer_id, PodMember.status == "active").first()
+                    is not None,
+                },
                 dedupe_key=f"free_period_ending:{customer_id}",
             )
         )

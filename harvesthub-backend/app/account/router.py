@@ -9,6 +9,7 @@ from app.account import service
 from app.core import supabase_admin
 from app.membership import service as membership_service
 from app.delivery import service as delivery_service
+from app.pods import service as pods_service
 from app.core.database import get_db
 from app.core.security import get_current_user
 
@@ -52,6 +53,8 @@ def delete_my_account(db: Session = Depends(get_db), user=Depends(get_current_us
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="We couldn't cancel your Harvest Pass just now. Please try again in a few minutes.",
         )
+    # Their neighbors hear about it, and a pod that drops too low is paused.
+    pods_service.leave_all_for_deletion(db, user["id"])
     doorstep_photos = delivery_service.customer_photo_paths(db, user["id"])
     db.close()  # nothing else to read; don't hold a connection during the Supabase calls
     try:

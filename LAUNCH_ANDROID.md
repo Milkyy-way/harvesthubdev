@@ -135,7 +135,7 @@ Create a **new** project for production, separate from the one you develop on, s
   ```
   - Get the connection string from Project Settings → Database → Connection string → **Session pooler**, with your password filled in.
   - The script uses `psql` from your PostgreSQL install, applies all migrations in order, and **skips the sample farms**. It's safe to run again.
-- [ ] Also bring your **development** project up to date (it needs the new `0034` — ratings can only be written through the API):
+- [ ] Also bring your **development** project up to date (it needs the new `0034` and `0035` — ratings written only through the API, and Neighborhood Pods). **Run this before the new backend deploys:** the new code expects `0035`'s columns:
   ```
   node supabase/apply-migrations.mjs "<dev connection string>" --from 0034
   ```
@@ -223,7 +223,8 @@ Any host that runs a Dockerfile works. **Render** is the simplest:
   | `GOOGLE_MAPS_API_KEY` | Step 3c |
   | `CRON_SECRET` | Any long random string (a password generator's 40 characters). Used by the scheduled job below. |
 
-- [ ] **Scheduled job** (reminders, farmer approval/rejection notices, payout notices, and the monthly location refresh Google's terms require). Google Cloud → **Cloud Scheduler** → Create job (3 jobs a month are free):
+- [ ] **iPhone invite links:** add `APPLE_TEAM_ID` (Apple Developer → Membership details → Team ID). Tapping a Neighborhood Pod invite then opens the iPhone app directly. The app's link host comes from the API address it's built with, so a build only works with the server address it was built for. If you later give the API its own domain, set `EXPO_PUBLIC_LEGAL_BASE_URL` and rebuild. Add `IOS_APP_URL` too, so people without the app can get it: the App Store link, or a TestFlight public link until then.
+- [ ] **Scheduled job** (required for Neighborhood Pods: it's what charges pod orders when a farm's orders close. Also reminders, farmer approval/rejection notices, payout notices, other pod timers such as invites running out and paused pods ending, and the monthly location refresh Google's terms require). Google Cloud → **Cloud Scheduler** → Create job (3 jobs a month are free):
   - Frequency `*/15 * * * *`, time zone America/New_York.
   - Target **HTTP**, method **POST**, URL `https://api.harvesthubmarket.com/api/v1/internal/jobs/run`.
   - Header `X-Cron-Secret` = the same value as `CRON_SECRET`.

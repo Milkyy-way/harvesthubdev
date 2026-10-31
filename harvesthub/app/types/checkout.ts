@@ -5,11 +5,12 @@
 
 export type FulfillmentMethod = 'pickup' | 'delivery';
 
-// Deliveries go to the customer's saved address (Edit Profile), so the only
-// thing to choose for one is the window.
+// Deliveries go to the customer's saved address (Edit Profile) or, with podId,
+// their Neighborhood Pod's drop point; either way the window is chosen too.
 export interface FarmFulfillment {
   method: FulfillmentMethod | null;
   deliverySlot: string | null; // DeliverySlot.starts_at
+  podId: string | null;
 }
 
 export function isFulfillmentReady(fulfillment: FarmFulfillment | undefined): boolean {
@@ -49,6 +50,13 @@ export interface CheckoutGroup {
   delivery_window_label: string | null;
   delivery_address_line: string | null;
   delivery_error: string | null;
+  pod_id: string | null;
+  pod_name: string | null;
+  pod_savings: number; // the most the pod can save against home delivery
+  // A pod order: delivery_fee and farm_total are the most it can come to. It's
+  // charged once at charge_at, down to pod_fee_low if every household orders.
+  pod_fee_low: number | null;
+  charge_at: string | null;
   service_fee: number;
   member_savings: number; // service fee Harvest Pass waived for this farm
   tax: number;

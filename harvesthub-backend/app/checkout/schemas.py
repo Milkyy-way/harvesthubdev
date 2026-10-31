@@ -11,6 +11,8 @@ class CheckoutGroupRequest(BaseModel):
     # Delivery: the chosen window's start, exactly as GET /delivery/options
     # returned it (slots[].starts_at).
     delivery_starts_at: Optional[str] = None
+    # Deliver to this Neighborhood Pod's drop point instead of home.
+    pod_id: Optional[str] = None
 
 
 class CheckoutPreviewRequest(BaseModel):
@@ -52,6 +54,14 @@ class CheckoutGroupOut(BaseModel):
     delivery_window_label: Optional[str] = None
     delivery_address_line: Optional[str] = None
     delivery_error: Optional[str] = None
+    pod_id: Optional[str] = None
+    pod_name: Optional[str] = None
+    pod_savings: float = 0  # the most the pod can save against home delivery
+    # A pod order: delivery_fee and farm_total are the most it can come to. It's
+    # charged once at charge_at, with the fee divided among those who ordered,
+    # down to pod_fee_low if every household does.
+    pod_fee_low: Optional[float] = None
+    charge_at: Optional[str] = None
     service_fee: float
     member_savings: float  # service fee Harvest Pass waived for this farm
     tax: float

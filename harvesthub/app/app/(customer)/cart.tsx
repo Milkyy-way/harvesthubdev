@@ -17,7 +17,7 @@ export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { customerProfile } = useAuth();
-  const { fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot } = useCheckoutDraft();
+  const { fulfillmentByFarm, ensureFarm, setMethod, setDeliverySlot, setPod } = useCheckoutDraft();
 
   const [cart, setCart] = useState<CartSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,10 +67,17 @@ export default function CartScreen() {
     for (const [farmerId, option] of Object.entries(deliveryByFarm)) {
       const draft = fulfillmentByFarm[farmerId];
       if (draft?.method !== 'delivery') continue;
-      if (!option.available) setMethod(farmerId, 'pickup');
-      else if (draft.deliverySlot && !option.slots.some((s) => s.starts_at === draft.deliverySlot)) setDeliverySlot(farmerId, null);
+      const pods = option.pods ?? [];
+      const pod = pods.find((p) => p.pod_id === draft.podId);
+      if (draft.podId && !pod) setPod(farmerId, null); // left the pod, or it's paused
+      else if (pod) {
+        if (draft.deliverySlot && !pod.slots.some((s) => s.starts_at === draft.deliverySlot)) setDeliverySlot(farmerId, null);
+      } else if (!option.available) {
+        if (pods.length > 0) setPod(farmerId, pods[0].pod_id); // out of home delivery range, but a pod reaches them
+        else setMethod(farmerId, 'pickup');
+      } else if (draft.deliverySlot && !option.slots.some((s) => s.starts_at === draft.deliverySlot)) setDeliverySlot(farmerId, null);
     }
-  }, [deliveryByFarm, fulfillmentByFarm, setMethod, setDeliverySlot]);
+  }, [deliveryByFarm, fulfillmentByFarm, setMethod, setDeliverySlot, setPod]);
 
   useFocusEffect(
     useCallback(() => {
@@ -125,6 +132,14 @@ export default function CartScreen() {
     return cart.farms.every((farm) => isFulfillmentReady(fulfillmentByFarm[farm.farmer_id]));
   }, [cart, fulfillmentByFarm]);
 
+  // A pod order is charged at its farm's cutoff, so it goes through on its own.
+  const podWithOthers = useMemo(
+    () =>
+      Boolean(cart && cart.farms.length > 1) &&
+      Boolean(cart?.farms.some((f) => fulfillmentByFarm[f.farmer_id]?.method === 'delivery' && fulfillmentByFarm[f.farmer_id]?.podId)),
+    [cart, fulfillmentByFarm]
+  );
+
   const goToCheckout = (farmerIds: string[]) => {
     router.push({ pathname: '/(customer)/checkout', params: { farmerIds: JSON.stringify(farmerIds) } });
   };
@@ -175,6 +190,8 @@ export default function CartScreen() {
             delivery={deliveryByFarm[farm.farmer_id] ?? null}
             deliverySlot={fulfillmentByFarm[farm.farmer_id]?.deliverySlot ?? null}
             onSelectDeliverySlot={(startsAt) => setDeliverySlot(farm.farmer_id, startsAt)}
+            podId={fulfillmentByFarm[farm.farmer_id]?.podId ?? null}
+            onSelectPod={(podId) => setPod(farm.farmer_id, podId)}
             readyToPlaceSeparately={isFulfillmentReady(fulfillmentByFarm[farm.farmer_id])}
             onPlaceOrderSeparately={() => goToCheckout([farm.farmer_id])}
           />
@@ -197,12 +214,16 @@ export default function CartScreen() {
             <Text style={styles.totalValue}>${cart.total.toFixed(2)}</Text>
           </View>
           <Pressable
-            style={[styles.checkoutButton, !readyForCheckout && styles.checkoutButtonDisabled]}
+            style={[styles.checkoutButton, (!readyForCheckout || podWithOthers) && styles.checkoutButtonDisabled]}
             onPress={handleCheckoutAtOnce}
-            disabled={!readyForCheckout}
+            disabled={!readyForCheckout || podWithOthers}
           >
             <Text style={styles.checkoutText}>
-              {readyForCheckout ? 'Checkout at Once' : 'Choose pickup, or a delivery time, for each farm'}
+              {podWithOthers
+                ? 'Place your pod order separately'
+                : readyForCheckout
+                  ? 'Checkout at Once'
+                  : 'Choose pickup, or a delivery time, for each farm'}
             </Text>
           </Pressable>
         </View>

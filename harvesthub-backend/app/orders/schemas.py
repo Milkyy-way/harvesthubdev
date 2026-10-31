@@ -15,8 +15,10 @@ class CreateOrderGroup(BaseModel):
     fulfillment_method: FulfillmentMethod
     promo_code: Optional[str] = None
     # Delivery: the chosen window (GET /delivery/options slots[].starts_at).
-    # It goes to the customer's saved address — never one sent here.
+    # It goes to the customer's saved address — never one sent here — or, with
+    # pod_id, to that Neighborhood Pod's drop point.
     delivery_starts_at: Optional[str] = None
+    pod_id: Optional[str] = None
 
 
 class CreateOrderRequest(BaseModel):
@@ -71,6 +73,9 @@ class PaymentOut(BaseModel):
     payment_method: PaymentMethod
     status: str
     failure_reason: Optional[str]
+    # A pod order: save a card with client_secret (a SetupIntent), and it's
+    # charged at the farm's cutoff.
+    charged_at_cutoff: bool = False
 
 
 class OrderOut(BaseModel):

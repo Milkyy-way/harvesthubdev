@@ -67,6 +67,8 @@ export interface OrderPayment {
   payment_method: OrderPaymentMethod;
   status: string;
   failure_reason: string | null;
+  // A pod order: client_secret saves a card, and it's charged at the farm's cutoff.
+  charged_at_cutoff: boolean;
 }
 
 export interface Order {
@@ -83,8 +85,9 @@ export interface CreateOrderGroup {
   fulfillment_method: FulfillmentMethod;
   promo_code?: string | null;
   // Delivery: the chosen window (DeliverySlot.starts_at). It goes to the
-  // customer's saved address.
+  // customer's saved address, or with pod_id to that pod's drop point.
   delivery_starts_at?: string | null;
+  pod_id?: string | null;
 }
 
 export interface CreateOrderRequest {

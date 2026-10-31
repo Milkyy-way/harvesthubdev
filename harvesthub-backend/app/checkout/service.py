@@ -69,6 +69,7 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
                 "quantity": item.quantity,
                 "line_total": round(float(product.price) * item.quantity, 2),
                 "tax_category": product.tax_category,
+                "keep_cold": bool(product.keep_cold),
             }
         )
 
@@ -96,7 +97,7 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
         # Delivery: the farm's own fee (it keeps all of it), to the customer's
         # saved address, in a window the farm still takes orders for.
         delivery = (
-            delivery_service.check_slot(db, group.farmer_id, customer_id, group.delivery_starts_at)
+            delivery_service.check_slot(db, group.farmer_id, customer_id, group.delivery_starts_at, group.pod_id)
             if group.fulfillment_method == "delivery"
             else None
         )
@@ -146,6 +147,13 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
                 "delivery_window_label": delivery.get("label") if delivery else None,
                 "delivery_address_line": delivery.get("address_line") if delivery else None,
                 "delivery_error": delivery.get("error") if delivery else None,
+                "pod_id": delivery.get("pod_id") if delivery else None,
+                "pod_name": delivery.get("pod_name") if delivery else None,
+                "pod_drop_version": delivery.get("pod_drop_version") if delivery else None,
+                "pod_savings": delivery.get("pod_savings", 0.0) if delivery else 0.0,
+                "pod_full_fee": delivery.get("pod_full_fee") if delivery else None,
+                "pod_fee_low": delivery.get("pod_fee_low") if delivery else None,
+                "charge_at": delivery.get("charge_at") if delivery else None,
                 "service_fee": service_fee,
                 "member_savings": member_savings,
                 "tax": tax,

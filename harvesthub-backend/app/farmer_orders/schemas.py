@@ -13,6 +13,7 @@ class FarmerOrderItemOut(BaseModel):
     unit_price: float
     quantity: int
     line_total: float
+    keep_cold: bool = False
 
 
 class FarmerOrderOut(BaseModel):
@@ -30,6 +31,7 @@ class FarmerOrderOut(BaseModel):
     delivery_window_label: Optional[str] = None
     delivery_address_line: Optional[str] = None
     delivery_fee: float = 0  # the farm keeps all of it
+    pod_name: Optional[str] = None  # goes to this Neighborhood Pod's drop point
     items: list[FarmerOrderItemOut]
     subtotal: float
     promo_code: Optional[str]

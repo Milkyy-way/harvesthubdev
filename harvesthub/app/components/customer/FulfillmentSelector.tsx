@@ -15,10 +15,13 @@ type Props = {
   delivery: FarmDeliveryOption | null;
   deliverySlot: string | null;
   onSelectDeliverySlot: (startsAt: string) => void;
+  podId: string | null;
+  onSelectPod: (podId: string | null) => void;
 };
 
-// Pickup, or — for farms that deliver — delivery to the customer's saved
-// address in a window the farm offers. The farm sets the fee and keeps it.
+// Pickup, or — for farms that deliver — delivery in a window the farm offers,
+// to the customer's saved address or a Neighborhood Pod they're in. The farm
+// sets each fee and keeps it.
 export function FulfillmentSelector({
   method,
   onSelectMethod,
@@ -27,10 +30,18 @@ export function FulfillmentSelector({
   delivery,
   deliverySlot,
   onSelectDeliverySlot,
+  podId,
+  onSelectPod,
 }: Props) {
   const router = useRouter();
   const offersDelivery = Boolean(delivery?.offers_delivery);
-  const canDeliver = Boolean(delivery?.available);
+  const pods = delivery?.pods ?? [];
+  const homeAvailable = Boolean(delivery?.available);
+  const canDeliver = homeAvailable || pods.length > 0;
+  const selectedPod = pods.find((p) => p.pod_id === podId) ?? null;
+  const slots = selectedPod ? selectedPod.slots : (delivery?.slots ?? []);
+  // The toggle shows the least it can be when a pod is an option.
+  const shownFee = selectedPod?.delivery_fee ?? (homeAvailable ? delivery?.delivery_fee : pods[0]?.delivery_fee);
 
   return (
     <View style={styles.container}>
@@ -56,12 +67,17 @@ export function FulfillmentSelector({
           >
             <MaterialIcons name="local-shipping" size={16} color={method === 'delivery' ? colors.white : colors.textMuted} />
             <Text style={[styles.toggleText, method === 'delivery' && styles.toggleTextActive]}>
-              Delivery{delivery ? ` · $${delivery.delivery_fee.toFixed(2)}` : ''}
+              Delivery{delivery && shownFee !== undefined ? ` · ${selectedPod || !homeAvailable ? 'from ' : ''}$${shownFee.toFixed(2)}` : ''}
             </Text>
           </Pressable>
         ) : null}
       </View>
       {offersDelivery && !canDeliver && delivery?.reason ? <Text style={styles.reason}>{delivery.reason}</Text> : null}
+      {method !== 'delivery' && pods.length > 0 ? (
+        <Text style={styles.reason}>
+          Your pod {pods[0].pod_name} can get delivery from ${pods[0].delivery_fee.toFixed(2)}.
+        </Text>
+      ) : null}
 
       {method === 'pickup' ? (
         <View style={styles.box}>
@@ -75,18 +91,42 @@ export function FulfillmentSelector({
         </View>
       ) : method === 'delivery' && delivery ? (
         <View>
-          <View style={styles.box}>
-            <MaterialIcons name="home" size={16} color={colors.textMuted} />
-            <Text style={styles.boxText} numberOfLines={2}>
-              To {delivery.address_line}
-            </Text>
-            <Pressable style={styles.smallButton} onPress={() => router.push('/(customer)/edit-profile')} hitSlop={8}>
-              <Text style={styles.smallButtonText}>Change</Text>
-            </Pressable>
-          </View>
+          {pods.length > 0 ? (
+            <View style={styles.destinations}>
+              {homeAvailable ? (
+                <Destination
+                  icon="home"
+                  title={`Home · $${delivery.delivery_fee.toFixed(2)}`}
+                  line={delivery.address_line}
+                  selected={!selectedPod}
+                  onPress={() => onSelectPod(null)}
+                />
+              ) : null}
+              {pods.map((pod) => (
+                <Destination
+                  key={pod.pod_id}
+                  icon="groups"
+                  title={`${pod.pod_name} · $${pod.delivery_fee.toFixed(2)} to $${pod.total_fee.toFixed(2)}`}
+                  line={`$${pod.total_fee.toFixed(2)} split among the members who order. ${pod.drop_address_line}`}
+                  selected={selectedPod?.pod_id === pod.pod_id}
+                  onPress={() => onSelectPod(pod.pod_id)}
+                />
+              ))}
+            </View>
+          ) : (
+            <View style={styles.box}>
+              <MaterialIcons name="home" size={16} color={colors.textMuted} />
+              <Text style={styles.boxText} numberOfLines={2}>
+                To {delivery.address_line}
+              </Text>
+              <Pressable style={styles.smallButton} onPress={() => router.push('/(customer)/edit-profile')} hitSlop={8}>
+                <Text style={styles.smallButtonText}>Change</Text>
+              </Pressable>
+            </View>
+          )}
           <Text style={styles.slotLabel}>Choose a delivery time</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.slots}>
-            {delivery.slots.map((slot) => {
+            {slots.map((slot) => {
               const selected = slot.starts_at === deliverySlot;
               return (
                 <Pressable
@@ -102,15 +142,69 @@ export function FulfillmentSelector({
               );
             })}
           </ScrollView>
-          <Text style={styles.fine}>Left at your door if you&apos;re not home, with a photo from the farm.</Text>
+          <Text style={styles.fine}>
+            {selectedPod
+              ? 'Collect it at your drop point. Your card is charged once, when orders close.'
+              : 'Left at your door if you\'re not home, with a photo from the farm.'}
+          </Text>
         </View>
       ) : null}
     </View>
   );
 }
 
+function Destination({
+  icon,
+  title,
+  line,
+  selected,
+  onPress,
+}: {
+  icon: React.ComponentProps<typeof MaterialIcons>['name'];
+  title: string;
+  line: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.destination, selected && styles.destinationSelected]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+    >
+      <MaterialIcons name={icon} size={17} color={selected ? colors.primary : colors.textMuted} />
+      <View style={styles.destinationText}>
+        <Text style={styles.destinationTitle}>{title}</Text>
+        <Text style={styles.destinationLine} numberOfLines={2}>
+          {line}
+        </Text>
+      </View>
+      <MaterialIcons
+        name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
+        size={19}
+        color={selected ? colors.primary : colors.border}
+      />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { marginTop: spacing.sm },
+  destinations: { gap: spacing.xs, marginTop: spacing.sm },
+  destination: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    padding: spacing.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  destinationSelected: { backgroundColor: colors.tint, borderColor: colors.primary },
+  destinationText: { flex: 1 },
+  destinationTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
+  destinationLine: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
   label: { fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: spacing.xs },
   toggleRow: { flexDirection: 'row', gap: spacing.xs },
   toggle: {

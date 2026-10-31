@@ -16,3 +16,9 @@ export const LEGAL_URLS = {
 // once it's listed, anything else on a page with both. Same base as above,
 // or EXPO_PUBLIC_APP_SHARE_URL to share a different link entirely.
 export const APP_SHARE_URL = process.env.EXPO_PUBLIC_APP_SHARE_URL ?? `${base}/app`;
+
+// A Neighborhood Pod invite (harvesthub-backend/app/legal/router.py, GET
+// /invite/{code}): opens the app, or shows the code and where to get the app.
+export function podInviteUrl(code: string): string {
+  return `${base}/invite/${code}`;
+}

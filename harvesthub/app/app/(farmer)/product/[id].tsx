@@ -38,6 +38,7 @@ type FormState = {
   customUnit: string;
   quantity: string;
   taxCategory: TaxCategory;
+  keepCold: boolean;
   isActive: boolean;
 };
 
@@ -50,6 +51,7 @@ const EMPTY_FORM: FormState = {
   customUnit: '',
   quantity: '',
   taxCategory: 'raw',
+  keepCold: false,
   isActive: true,
 };
 
@@ -100,6 +102,7 @@ export default function ProductEditor() {
           customUnit: knownUnit ? '' : p.unit,
           quantity: String(p.quantity_available),
           taxCategory: p.tax_category,
+          keepCold: p.keep_cold,
           isActive: p.is_active,
         });
         setImageUrl(p.image_url);
@@ -147,6 +150,7 @@ export default function ProductEditor() {
       unit: result.data.unit,
       quantity_available: result.data.quantity,
       tax_category: form.taxCategory,
+      keep_cold: form.keepCold,
       is_active: form.isActive,
     };
 
@@ -297,6 +301,22 @@ export default function ProductEditor() {
               title="Prepared"
               body="Made or cooked — jams, baked goods, ready-to-eat food. Usually taxed at a higher rate."
               onPress={() => update({ taxCategory: 'prepared' })}
+            />
+          </View>
+
+          <View style={[styles.card, styles.switchRow]}>
+            <View style={styles.flex1}>
+              <Text style={styles.cardTitle}>Needs to stay cold</Text>
+              <Text style={styles.muted}>
+                Dairy, meat, eggs and the like. Customers collecting from a pod&apos;s drop point are told to pick it up soon after delivery.
+              </Text>
+            </View>
+            <Switch
+              value={form.keepCold}
+              onValueChange={(keepCold) => update({ keepCold })}
+              trackColor={{ true: colors.primaryMid, false: colors.border }}
+              thumbColor={colors.white}
+              accessibilityLabel="Needs to stay cold"
             />
           </View>
 

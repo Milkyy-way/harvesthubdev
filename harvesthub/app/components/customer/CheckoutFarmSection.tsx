@@ -43,7 +43,9 @@ export function CheckoutFarmSection({
         <Text style={styles.fulfillmentText} numberOfLines={2}>
           {group.fulfillment_method === 'pickup'
             ? `Pickup at ${pickupAddressLine || group.farm_name}`
-            : `Delivery ${group.delivery_window_label ?? ''} to ${group.delivery_address_line || 'your address'}`}
+            : group.pod_name
+              ? `Delivery ${group.delivery_window_label ?? ''} to ${group.pod_name}'s drop point: ${group.delivery_address_line ?? ''}`
+              : `Delivery ${group.delivery_window_label ?? ''} to ${group.delivery_address_line || 'your address'}`}
         </Text>
         {group.fulfillment_method === 'pickup' && group.latitude !== null ? (
           <Pressable onPress={handleDirections} hitSlop={8}>
@@ -95,7 +97,14 @@ export function CheckoutFarmSection({
       <View style={styles.breakdown}>
         <BreakdownLine label="Subtotal" value={group.subtotal} />
         {group.promo_discount > 0 ? <BreakdownLine label="Promo discount" value={-group.promo_discount} highlight /> : null}
-        {group.fulfillment_method === 'delivery' ? <BreakdownLine label="Delivery fee" value={group.delivery_fee} /> : null}
+        {group.fulfillment_method === 'delivery' ? (
+          <BreakdownLine label={group.pod_name ? 'Your delivery share, at most' : 'Delivery fee'} value={group.delivery_fee} />
+        ) : null}
+        {group.pod_fee_low !== null ? (
+          <Text style={styles.podSavings}>
+            As little as ${group.pod_fee_low.toFixed(2)} if every member orders. It&apos;s split among those who do.
+          </Text>
+        ) : null}
         {group.member_savings > 0 ? (
           <BreakdownLine label="Service fee · free with Harvest Pass" value={0} member />
         ) : (
@@ -103,7 +112,7 @@ export function CheckoutFarmSection({
         )}
         <BreakdownLine label="Tax" value={group.tax} />
         <View style={styles.divider} />
-        <BreakdownLine label="Farm total" value={group.farm_total} bold />
+        <BreakdownLine label={group.pod_name ? 'The most you\'d pay' : 'Farm total'} value={group.farm_total} bold />
       </View>
     </View>
   );
@@ -187,5 +196,6 @@ const styles = StyleSheet.create({
   breakdownValueBold: { fontSize: 15, fontWeight: '700', color: colors.text },
   breakdownValueHighlight: { color: colors.danger },
   breakdownMember: { color: colors.primary, fontWeight: '700' },
+  podSavings: { fontSize: 12, fontWeight: '600', color: colors.primary, marginBottom: 3 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.xs },
 });

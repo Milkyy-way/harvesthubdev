@@ -152,29 +152,37 @@ def out_for_delivery(ctx: dict) -> Message:
 
 
 def delivery_next(ctx: dict) -> Message:
-    """ctx: farm_name, order_id."""
+    """ctx: farm_name, order_id, to_pod."""
     farm = ctx["farm_name"]
+    where = "your pod's drop point" if ctx.get("to_pod") else "you"
     return Message(
         title="You're next!",
-        body=f"{farm} is heading to you now.",
+        body=f"{farm} is heading to {where} now.",
         channels=(PUSH, SMS),
         url=f"/(customer)/orders/{ctx['order_id']}",
-        sms=_sms(f"You're next! {farm} is heading to you now with your order."),
+        sms=_sms(f"You're next! {farm} is heading to {where} now with your order."),
     )
 
 
 def delivered(ctx: dict) -> Message:
-    """ctx: farm_name, order_id, has_photo, note."""
+    """ctx: farm_name, order_id, has_photo, note; for a pod order also
+    to_pod, drop_address and cold_hours (None without cold items)."""
     farm = ctx["farm_name"]
     photo = " There's a photo of where it was left in the app." if ctx.get("has_photo") else ""
     note = f" Note from the farm: {ctx['note']}" if ctx.get("note") else ""
+    place = ""
+    if ctx.get("to_pod"):
+        address = f" at {ctx['drop_address']}" if ctx.get("drop_address") else ""
+        place = f" It's at your pod's drop point{address}."
+        if ctx.get("cold_hours"):
+            place += f" It has cold items, so please collect it within {ctx['cold_hours']} hours."
     return Message(
         title="Your order was delivered",
-        body=f"{farm} delivered your order.{photo}",
+        body=f"{farm} delivered your order.{place or photo}",
         channels=(PUSH, EMAIL),
         url=f"/(customer)/orders/{ctx['order_id']}",
         email_paragraphs=[
-            f"{farm} delivered your order.{photo}{note}",
+            f"{farm} delivered your order.{place}{photo}{note}",
             "Something not right? Open the order in the app to let us know.",
         ],
     )
@@ -205,6 +213,11 @@ def free_period_ending(ctx: dict) -> Message:
             f"Your free month of Harvest Pass ends on {when}.",
             "To keep skipping the service fee on your orders, join Harvest Pass in the app (Account → Harvest Pass) "
             "before then. Nothing is charged until your free month is over.",
+            *(
+                ["Neighborhood Pods are for Harvest Pass members, so without it you'll leave your pod at the end of that delivery cycle."]
+                if ctx.get("in_pod")
+                else []
+            ),
         ],
     )
 
@@ -237,6 +250,225 @@ def membership_payment_failed(ctx: dict) -> Message:
     )
 
 
+# --- Neighborhood Pods -------------------------------------------------------------
+
+
+def _pod_url(ctx: dict) -> str:
+    return f"/(customer)/pods/{ctx['pod_id']}"
+
+
+def _members_text(count: int) -> str:
+    return f"{count} member" if count == 1 else f"{count} members"
+
+
+def pod_active(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, delivery_day."""
+    return Message(
+        title="Your pod is live!",
+        body=f"{ctx['pod_name']} is active. Order for {ctx['delivery_day']} and collect at your drop point.",
+        channels=(PUSH, EMAIL),
+        url=_pod_url(ctx),
+        email_paragraphs=[
+            f"{ctx['pod_name']} has enough neighbors and is now active.",
+            f"Your delivery day is {ctx['delivery_day']}. When you check out, choose your pod for delivery. Each farm's "
+            "delivery fee is split evenly among the members who order, and your card is charged once, when that "
+            "farm's orders close.",
+        ],
+    )
+
+
+def pod_member_joined(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, first_name, needed (more needed to go live)."""
+    more = f" {ctx['needed']} more to go live." if ctx.get("needed") else ""
+    return Message(
+        title="A neighbor joined your pod",
+        body=f"{ctx['first_name']} joined {ctx['pod_name']}.{more}",
+        channels=(PUSH,),
+        url=_pod_url(ctx),
+    )
+
+
+def pod_invite_declined(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, label."""
+    who = ctx.get("label") or "A neighbor"
+    return Message(
+        title="Pod invite declined",
+        body=f"{who} said no to joining {ctx['pod_name']}.",
+        channels=(PUSH,),
+        url=_pod_url(ctx),
+    )
+
+
+def _when(value) -> str:
+    local = value.astimezone(LOCAL_TZ)
+    hour = local.hour % 12 or 12
+    minute = f":{local.minute:02d}" if local.minute else ""
+    return f"{local:%b} {local.day} at {hour}{minute} {'AM' if local.hour < 12 else 'PM'}"
+
+
+def pod_order_scheduled(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, charge_at."""
+    when = _when(ctx["charge_at"])
+    return Message(
+        title="Your pod order is in",
+        body=f"Nothing charged yet. Orders from {ctx['farm_name']} close {when}, then your card is charged once.",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"Your order from {ctx['farm_name']} is in, and nothing has been charged yet.",
+            f"Orders close on {when}. Then the delivery fee is split evenly among the members who ordered, and your "
+            "saved card is charged once for your exact total. You can cancel for free until then.",
+        ],
+    )
+
+
+def pod_order_reminder(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, farm_name, ordered, total, share, cutoff, has_ordered."""
+    state = f"{ctx['ordered']} of {ctx['total']} members have ordered from {ctx['farm_name']}, so delivery is {_money(ctx['share'])} each right now."
+    when = _when(ctx["cutoff"])
+    ask = f"You can cancel until {when}." if ctx.get("has_ordered") else f"Order by {when} to join in and bring it down."
+    return Message(
+        title=f"{ctx['pod_name']}: orders close soon",
+        body=f"{state} {ask}",
+        channels=(PUSH,),
+        url=_pod_url(ctx),
+    )
+
+
+def pod_charge_failed(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, amount."""
+    return Message(
+        title="Your card was declined",
+        body=f"We couldn't charge {_money(ctx['amount'])} for your {ctx['farm_name']} order. Update your card to keep it.",
+        channels=(PUSH, EMAIL, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"We couldn't charge {_money(ctx['amount'])} to your card for your pod order from {ctx['farm_name']}.",
+            "We'll try once more soon. To keep your order, open it in the app and use a different card.",
+        ],
+        sms=_sms(f"Your card was declined for your {ctx['farm_name']} pod order. Open the app to update it and keep your order."),
+    )
+
+
+def pod_charge_cancelled(ctx: dict) -> Message:
+    """ctx: farm_name, order_id."""
+    return Message(
+        title="Your pod order was cancelled",
+        body=f"We couldn't charge your card, so your {ctx['farm_name']} order was cancelled. You haven't been charged.",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"We couldn't charge your card, so your pod order from {ctx['farm_name']} was cancelled. You haven't been charged.",
+        ],
+    )
+
+
+def pod_paused(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, grace_ends_at, needs_drop_point."""
+    when = _date(ctx["grace_ends_at"])
+    why = "It needs a new drop point." if ctx.get("needs_drop_point") else "It needs more neighbors to reach the minimum."
+    return Message(
+        title="Your pod is paused",
+        body=f"{ctx['pod_name']} can't take new orders. {why} It ends {when} otherwise.",
+        channels=(PUSH, EMAIL),
+        url=_pod_url(ctx),
+        email_paragraphs=[
+            f"{ctx['pod_name']} is paused, so it can't take new orders. Orders already placed will still be delivered.",
+            f"{why} If that doesn't happen by {when}, the pod will end.",
+        ],
+    )
+
+
+def pod_resumed(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name."""
+    return Message(
+        title="Your pod is back",
+        body=f"{ctx['pod_name']} is active again. You can order for your delivery day.",
+        channels=(PUSH,),
+        url=_pod_url(ctx),
+    )
+
+
+def pod_ended(ctx: dict) -> Message:
+    """ctx: pod_name, reason: 'expired' | 'dissolved'."""
+    if ctx.get("reason") == "expired":
+        line = f"{ctx['pod_name']} didn't reach enough neighbors in time, so it has ended."
+    else:
+        line = f"{ctx['pod_name']} has ended."
+    return Message(
+        title="Your pod has ended",
+        body=line,
+        channels=(PUSH, EMAIL),
+        url="/(customer)/pods",
+        email_paragraphs=[line, "Orders already placed will still be delivered. You can start or join another pod in the app."],
+    )
+
+
+def pod_member_leaving(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, count (members after the departure)."""
+    return Message(
+        title="Your pod is changing",
+        body=f"{ctx['pod_name']} will have {_members_text(ctx['count'])} after the current delivery cycle.",
+        channels=(PUSH,),
+        url=_pod_url(ctx),
+    )
+
+
+def pod_membership_lapsing(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, leave_at."""
+    when = _date(ctx["leave_at"])
+    return Message(
+        title="You're leaving your pod soon",
+        body=f"Pods are for Harvest Pass members. Join by {when} to stay in {ctx['pod_name']}.",
+        channels=(PUSH, EMAIL),
+        url="/(customer)/harvest-pass",
+        email_paragraphs=[
+            f"Neighborhood Pods are for Harvest Pass members, and your Harvest Pass has ended. You'll leave {ctx['pod_name']} on {when}.",
+            "Join Harvest Pass in the app (Account → Harvest Pass) before then to stay.",
+        ],
+    )
+
+
+def pod_removed(ctx: dict) -> Message:
+    """ctx: pod_name."""
+    return Message(
+        title="You've been removed from a pod",
+        body=f"The host removed you from {ctx['pod_name']}. Any order you already placed will still be delivered.",
+        channels=(PUSH, EMAIL),
+        url="/(customer)/pods",
+        email_paragraphs=[
+            f"The host of {ctx['pod_name']} removed you from the pod. Any order you already placed will still be delivered.",
+        ],
+    )
+
+
+def pod_new_host(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, you (bool), first_name, needs_drop_point."""
+    if ctx.get("you"):
+        ask = " Please choose a new drop point." if ctx.get("needs_drop_point") else ""
+        body = f"You're now the host of {ctx['pod_name']}.{ask}"
+    else:
+        body = f"{ctx['first_name']} is now the host of {ctx['pod_name']}."
+    return Message(title="Your pod has a new host", body=body, channels=(PUSH, EMAIL), url=_pod_url(ctx), email_paragraphs=[body])
+
+
+def pod_drop_changed(ctx: dict) -> Message:
+    """ctx: pod_id, pod_name, address_line, reapprove_by."""
+    when = _date(ctx["reapprove_by"])
+    return Message(
+        title="Please approve your pod's new drop point",
+        body=f"{ctx['pod_name']} is moving to {ctx['address_line']}. Approve it by {when} to stay in the pod.",
+        channels=(PUSH, EMAIL),
+        url=_pod_url(ctx),
+        email_paragraphs=[
+            f"The host of {ctx['pod_name']} changed the drop point to {ctx['address_line']}.",
+            f"Open the pod in the app to approve it by {when}. If you don't, you'll leave the pod at the end of the delivery "
+            "cycle. Any order of yours that hasn't left the farm now goes to the new drop point. You can cancel it in the "
+            "app until the farm sets off.",
+        ],
+    )
+
+
 # --- Farmers -------------------------------------------------------------------------
 
 
@@ -261,6 +493,20 @@ def new_order(ctx: dict) -> Message:
             ),
         ],
         sms=_sms(f"New order — {summary}{paid}. Open the app to pack it."),
+    )
+
+
+def pod_drop_moved(ctx: dict) -> Message:
+    """ctx: pod_name, address_line."""
+    return Message(
+        title="A pod's drop point moved",
+        body=f"{ctx['pod_name']} moved to {ctx['address_line']}. Your orders for it now go there.",
+        channels=(PUSH, EMAIL),
+        url="/(farmer)/deliveries",
+        email_paragraphs=[
+            f"{ctx['pod_name']} changed its drop point to {ctx['address_line']}. Your orders for that pod now go there. "
+            "It's within your delivery distance. You'll find the new address on the delivery run.",
+        ],
     )
 
 
@@ -332,6 +578,22 @@ BUILDERS = {
     "out_for_delivery": out_for_delivery,
     "delivery_next": delivery_next,
     "delivered": delivered,
+    "pod_active": pod_active,
+    "pod_member_joined": pod_member_joined,
+    "pod_invite_declined": pod_invite_declined,
+    "pod_paused": pod_paused,
+    "pod_resumed": pod_resumed,
+    "pod_ended": pod_ended,
+    "pod_member_leaving": pod_member_leaving,
+    "pod_membership_lapsing": pod_membership_lapsing,
+    "pod_removed": pod_removed,
+    "pod_new_host": pod_new_host,
+    "pod_drop_changed": pod_drop_changed,
+    "pod_drop_moved": pod_drop_moved,
+    "pod_order_scheduled": pod_order_scheduled,
+    "pod_order_reminder": pod_order_reminder,
+    "pod_charge_failed": pod_charge_failed,
+    "pod_charge_cancelled": pod_charge_cancelled,
     "new_order": new_order,
     "order_cancelled_by_customer": order_cancelled_by_customer,
     "farmer_approved": farmer_approved,

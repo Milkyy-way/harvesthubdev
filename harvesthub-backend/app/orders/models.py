@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, TIMESTAMP
+from sqlalchemy import Boolean, Column, String, Integer, Numeric, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
@@ -53,6 +53,13 @@ class StoreOrder(Base):
     delivery_window_starts_at = Column(TIMESTAMP(timezone=True), nullable=True)
     delivery_window_ends_at = Column(TIMESTAMP(timezone=True), nullable=True)
     delivery_stop_id = Column(UUID(as_uuid=True), nullable=True)
+    # Delivered to a Neighborhood Pod's drop point (0035) instead of home: the
+    # delivery address columns above then hold that drop point.
+    pod_id = Column(UUID(as_uuid=True), nullable=True)
+    pod_drop_version = Column(Integer, nullable=True)
+    # The fee the pod's share is divided from. Until the cutoff, delivery_fee
+    # and total hold the most this order can come to (app/pods/charging.py).
+    pod_full_fee = Column(Numeric(10, 2), nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -68,6 +75,7 @@ class StoreOrderItem(Base):
     unit_price = Column(Numeric(10, 2), nullable=False)
     quantity = Column(Integer, nullable=False)
     line_total = Column(Numeric(10, 2), nullable=False)
+    keep_cold = Column(Boolean, nullable=False, default=False)  # snapshot, for pod drop points (0035)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
 

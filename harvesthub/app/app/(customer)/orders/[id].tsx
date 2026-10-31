@@ -179,11 +179,14 @@ export default function OrderDetailScreen() {
             ) : null}
             <View style={styles.summary}>
               <Text style={styles.summaryLabel}>Placed {new Date(order.placed_at).toLocaleString()}</Text>
-              <Text style={styles.summaryTotal}>${order.grand_total.toFixed(2)}</Text>
+              <Text style={styles.summaryTotal}>
+                {order.payment?.charged_at_cutoff && !paymentSettled(order.payment.status) ? 'Up to ' : ''}${order.grand_total.toFixed(2)}
+              </Text>
               {order.payment ? (
                 <Text style={styles.summaryPayment}>
-                  {order.payment.payment_method === 'cash_on_pickup' ? 'Cash on pickup' : 'Paid by card'} ·{' '}
-                  {order.payment.status}
+                  {order.payment.charged_at_cutoff && !paymentSettled(order.payment.status)
+                    ? 'Card charged when orders close'
+                    : `${order.payment.payment_method === 'cash_on_pickup' ? 'Cash on pickup' : 'Paid by card'} · ${order.payment.status}`}
                 </Text>
               ) : null}
             </View>
@@ -216,6 +219,11 @@ export default function OrderDetailScreen() {
       />
     </View>
   );
+}
+
+// A pod order that has been charged, or never will be, reads like any other.
+function paymentSettled(status: string): boolean {
+  return status === 'succeeded' || status === 'canceled';
 }
 
 const styles = StyleSheet.create({

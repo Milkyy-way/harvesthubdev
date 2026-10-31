@@ -69,6 +69,7 @@ export function DeliveryTracker({ orderId, storeOrderId, farmName, delivery, onS
   const stopsBefore = tracking?.stops_before ?? delivery.stops_before;
   const live = onTheWay && tracking?.farmer ? tracking : null;
 
+  const toPod = Boolean(delivery.pod_name);
   const message =
     delivery.stage === 'scheduled'
       ? "We'll let you know when it's on the way."
@@ -76,9 +77,9 @@ export function DeliveryTracker({ orderId, storeOrderId, farmName, delivery, onS
         ? stopsBefore === 0
           ? live?.eta_minutes
             ? `You're next — arriving in about ${live.eta_minutes} min.`
-            : "You're next — the farm is heading to you now."
+            : `You're next — the farm is heading to ${toPod ? "your pod's drop point" : 'you'} now.`
           : `On the way — ${stopsBefore} stop${stopsBefore === 1 ? '' : 's'} before yours.`
-        : `Delivered${delivery.delivered_at ? ` at ${clock(delivery.delivered_at)}` : ''}.`;
+        : `Delivered${toPod ? " to your pod's drop point" : ''}${delivery.delivered_at ? ` at ${clock(delivery.delivered_at)}` : ''}.`;
 
   const showPhoto = async () => {
     setLoadingPhoto(true);
@@ -120,6 +121,9 @@ export function DeliveryTracker({ orderId, storeOrderId, farmName, delivery, onS
       </View>
 
       <Text style={styles.message}>{message}</Text>
+      {delivery.collect_within_hours && delivery.stage !== 'scheduled' ? (
+        <Text style={styles.cold}>This order has cold items. Please collect it within {delivery.collect_within_hours} hours of delivery.</Text>
+      ) : null}
       {live?.farmer ? (
         <>
           <LiveDeliveryMap farmer={live.farmer} destination={live.destination} farmName={farmName} />
@@ -179,6 +183,7 @@ const styles = StyleSheet.create({
   stepLabelDone: { color: colors.primaryDark, fontWeight: '700' },
   message: { fontSize: 13.5, fontWeight: '600', color: colors.text, marginTop: spacing.sm, textAlign: 'center' },
   note: { fontSize: 12.5, color: colors.textMuted, marginTop: 4, textAlign: 'center' },
+  cold: { fontSize: 12.5, fontWeight: '600', color: colors.berry, marginTop: 4, textAlign: 'center' },
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: radius.md, marginTop: spacing.sm, backgroundColor: colors.border },
   photoButton: {
     flexDirection: 'row',

@@ -15,6 +15,11 @@
     reports its position; the customer whose stop is next sees it on a map
     with a rough arrival estimate. Only the latest point is kept, and it's
     cleared when the run completes.
+  * Neighborhood Pods (0035): an active pod's members can have an order
+    delivered to the pod's drop point instead of home, on the pod's day. The
+    farm's pod fee is split among the households that order, each charged at
+    the farm's cutoff (app/pods/charging.py). All of a pod's orders on a run
+    are one stop. The pod itself is run by app/pods/service.py.
 
 Nothing here imports app/orders/service.py (it imports us).
 """
@@ -38,7 +43,9 @@ from app.delivery.models import DeliveryRun, DeliveryStop, FarmDeliverySettings,
 from app.farmers.models import FarmerProfile
 from app.notifications.service import Notice, notify_many
 from app.orders.models import Order, StoreOrder, StoreOrderItem
+from app.payments.models import AWAITING_CUTOFF, CHARGE_FAILED, CHARGING, POD_PLACED_STATUSES, Payment
 from app.payouts import service as payouts_service
+from app.pods.models import Pod, PodMember
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +55,8 @@ PHOTO_BUCKET = "delivery-photos"
 PHOTO_RETENTION = timedelta(days=30)
 _PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "heic")
 _MAX_WINDOWS = 21
+# An order with cold items, left at a drop point: collect it within this long.
+POD_COLD_PICKUP_HOURS = 2
 
 # Live tracking. A position older than this is shown as "last updated …".
 LOCATION_STALE_AFTER = timedelta(minutes=3)
@@ -61,6 +70,7 @@ _AVERAGE_SPEED_KMH = 35.0
 DEFAULT_FEE = 5.00
 DEFAULT_RADIUS_MILES = 10.0
 DEFAULT_CUTOFF_HOURS = 24
+DEFAULT_POD_FEE = 5.00
 
 
 def _now() -> datetime:
@@ -91,6 +101,8 @@ def get_settings(db: Session, farmer_id) -> dict:
         "delivery_fee": _money(s.delivery_fee) if s else DEFAULT_FEE,
         "radius_miles": float(s.radius_miles) if s else DEFAULT_RADIUS_MILES,
         "cutoff_hours": s.cutoff_hours if s else DEFAULT_CUTOFF_HOURS,
+        "offers_pod_delivery": bool(s and s.offers_pod_delivery),
+        "pod_delivery_fee": _money(s.pod_delivery_fee) if s else DEFAULT_POD_FEE,
         "windows": [
             {"weekday": w.weekday, "start_time": w.start_time.strftime("%H:%M"), "end_time": w.end_time.strftime("%H:%M")}
             for w in _windows(db, farmer_id)
@@ -117,6 +129,8 @@ def update_settings(
     radius_miles: float,
     cutoff_hours: int,
     windows: list[dict],
+    offers_pod_delivery: bool = False,
+    pod_delivery_fee: float = DEFAULT_POD_FEE,
 ) -> dict:
     """Saves the whole Delivery settings screen at once; windows replace the
     old ones. Runs keep the times they were booked for, so changing windows
@@ -144,6 +158,15 @@ def update_settings(
                 detail="We couldn't place your farm's address on the map yet. Check it in your farm profile, then try again.",
             )
 
+    if offers_pod_delivery:
+        if not offers_delivery:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Turn on delivery to deliver to pods.")
+        if pod_delivery_fee > delivery_fee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The pod delivery fee can't be more than your regular delivery fee.",
+            )
+
     s = db.get(FarmDeliverySettings, farmer_id)
     if s is None:
         s = FarmDeliverySettings(farmer_id=farmer_id)
@@ -152,6 +175,8 @@ def update_settings(
     s.delivery_fee = round(delivery_fee, 2)
     s.radius_miles = round(radius_miles, 1)
     s.cutoff_hours = cutoff_hours
+    s.offers_pod_delivery = offers_pod_delivery
+    s.pod_delivery_fee = round(pod_delivery_fee, 2)
 
     db.query(FarmDeliveryWindow).filter(FarmDeliveryWindow.farmer_id == farmer_id).delete()
     for weekday, start, end in parsed:
@@ -194,9 +219,172 @@ def _unavailable_reason(farmer: FarmerProfile | None, s: FarmDeliverySettings | 
     return None
 
 
+# --- Neighborhood Pods: which farms deliver to a drop point -----------------------------
+
+
+def _reaches(farmer: FarmerProfile | None, s: FarmDeliverySettings | None, latitude, longitude) -> bool:
+    if farmer is None or s is None or not s.offers_delivery or not s.offers_pod_delivery:
+        return False
+    if farmer.latitude is None or latitude is None:
+        return False
+    miles = haversine_km(farmer.latitude, farmer.longitude, latitude, longitude) / KM_PER_MILE
+    return miles <= float(s.radius_miles)
+
+
+def pod_share(fee, households: int) -> float:
+    """One household's even share of a pod fee, fixed when they check out.
+    Rounded up to the cent, so the shares always cover the whole fee."""
+    cents = round(float(fee) * 100)
+    return -(-cents // max(households, 1)) / 100
+
+
+def pod_household_count(db: Session, pod_id) -> int:
+    return (
+        db.query(func.count(PodMember.id)).filter(PodMember.pod_id == pod_id, PodMember.status == "active").scalar() or 0
+    )
+
+
+def _share_terms(s: FarmDeliverySettings, households: int) -> dict:
+    share = pod_share(s.pod_delivery_fee, households)
+    return {
+        "pod_delivery_fee": _money(s.pod_delivery_fee),
+        "share": share,
+        "savings": max(round(_money(s.delivery_fee) - share, 2), 0.0),
+    }
+
+
+def within_delivery_radius(db: Session, farmer_id, latitude: float, longitude: float) -> tuple[bool, str]:
+    """Whether a farm's own distance reaches this point, and the farm's name."""
+    farmer = db.get(FarmerProfile, farmer_id)
+    s = db.get(FarmDeliverySettings, farmer_id)
+    name = farmer.farm_name if farmer else "A farm"
+    if farmer is None or s is None or farmer.latitude is None:
+        return False, name
+    return haversine_km(farmer.latitude, farmer.longitude, latitude, longitude) / KM_PER_MILE <= float(s.radius_miles), name
+
+
+def move_pod_orders(db: Session, pod: Pod) -> set:
+    """The drop point moved before it was locked: orders that haven't left
+    follow it. Returns the farms that had orders moved. Does NOT commit."""
+    orders = db.query(StoreOrder).filter(StoreOrder.pod_id == pod.id, StoreOrder.status.in_(("pending_payment", "paid"))).all()
+    for so in orders:
+        so.delivery_address_street = pod.address_street
+        so.delivery_address_city = pod.address_city
+        so.delivery_address_state = pod.address_state
+        so.delivery_address_zip = pod.address_zip
+        so.pod_drop_version = pod.drop_version
+    keeper_by_run: dict = {}
+    for stop in db.query(DeliveryStop).filter(DeliveryStop.pod_id == pod.id, DeliveryStop.status == "pending").all():
+        keeper = keeper_by_run.setdefault(stop.run_id, stop)
+        if keeper is stop:
+            stop.latitude, stop.longitude, stop.pod_drop_version = pod.latitude, pod.longitude, pod.drop_version
+        else:
+            # Orders for an older drop point had their own stop: one place again.
+            db.query(StoreOrder).filter(StoreOrder.delivery_stop_id == stop.id).update({"delivery_stop_id": keeper.id})
+            stop.status = "cancelled"
+    return {so.farmer_id for so in orders if so.status == "paid"}
+
+
+def pod_farms_near(db: Session, latitude: float, longitude: float, weekday: int | None = None, households: int = 1) -> list[dict]:
+    """Approved farms offering pod delivery whose own distance reaches this
+    point: what "inside the delivery zone" means. Each comes with the weekdays
+    it delivers, and what one of this many households would pay."""
+    rows = (
+        db.query(FarmerProfile, FarmDeliverySettings)
+        .join(FarmDeliverySettings, FarmDeliverySettings.farmer_id == FarmerProfile.id)
+        .join(Profile, Profile.id == FarmerProfile.id)
+        .filter(
+            FarmDeliverySettings.offers_delivery.is_(True),
+            FarmDeliverySettings.offers_pod_delivery.is_(True),
+            Profile.status == "active",
+        )
+        .all()
+    )
+    out = []
+    for farmer, s in rows:
+        if not _reaches(farmer, s, latitude, longitude):
+            continue
+        weekdays = sorted({w.weekday for w in _windows(db, farmer.id)})
+        if weekday is not None and weekday not in weekdays:
+            continue
+        if weekdays:
+            out.append(
+                {
+                    "farmer_id": str(farmer.id),
+                    "farm_name": farmer.farm_name,
+                    **_share_terms(s, households),
+                    "weekdays": weekdays,
+                }
+            )
+    return sorted(out, key=lambda f: f["farm_name"])
+
+
+def _pods_of(db: Session, customer_id) -> list[tuple[Pod, PodMember]]:
+    """Pods this customer can order to right now: active, and with the
+    current drop point approved. A paused pod can't take orders."""
+    return (
+        db.query(Pod, PodMember)
+        .join(PodMember, PodMember.pod_id == Pod.id)
+        .filter(
+            PodMember.customer_id == customer_id,
+            PodMember.status == "active",
+            PodMember.approved_drop_version == Pod.drop_version,
+            Pod.status == "active",
+        )
+        .order_by(Pod.delivery_weekday)
+        .all()
+    )
+
+
+def _pod_slots(db: Session, farmer_id, s: FarmDeliverySettings, pod: Pod, member: PodMember, now: datetime) -> list[tuple[datetime, datetime]]:
+    """The farm's windows on the pod's day. Someone on their way out of the
+    pod can still order for delivery before they go."""
+    windows = [w for w in _windows(db, farmer_id) if w.weekday == pod.delivery_weekday]
+    slots = _upcoming_slots(windows, s.cutoff_hours, now)
+    # A farmer who has set off has closed that window, whatever the clock says.
+    started = {
+        starts
+        for (starts,) in db.query(DeliveryRun.window_starts_at).filter(
+            DeliveryRun.farmer_id == farmer_id, DeliveryRun.status != "scheduled"
+        )
+    }
+    slots = [slot for slot in slots if slot[0] not in started]
+    if member.leave_at is not None:
+        slots = [slot for slot in slots if slot[0] < member.leave_at]
+    return slots
+
+
+def _pod_options(db: Session, customer_id, farmer: FarmerProfile | None, s: FarmDeliverySettings | None, now: datetime) -> list[dict]:
+    if farmer is None or s is None:
+        return []
+    out = []
+    for pod, member in _pods_of(db, customer_id):
+        if not _reaches(farmer, s, pod.latitude, pod.longitude):
+            continue
+        slots = _pod_slots(db, farmer.id, s, pod, member, now)
+        if slots:
+            households = pod_household_count(db, pod.id)
+            terms = _share_terms(s, households)
+            out.append(
+                {
+                    "pod_id": str(pod.id),
+                    "pod_name": pod.name,
+                    "drop_address_line": _address_line(pod.address_street, pod.address_city, pod.address_state, pod.address_zip),
+                    "delivery_fee": terms["share"],
+                    "total_fee": terms["pod_delivery_fee"],
+                    "households": households,
+                    "savings": terms["savings"],
+                    "slots": [
+                        {"starts_at": a.isoformat(), "ends_at": b.isoformat(), "label": window_label(a, b)} for a, b in slots[:6]
+                    ],
+                }
+            )
+    return out
+
+
 def delivery_options(db: Session, customer_id, farmer_ids: list[str]) -> list[dict]:
     """For the cart: per farm, can this customer get delivery, for how much,
-    and in which windows."""
+    and in which windows — to their home, and to any pod they're in."""
     customer = db.get(CustomerProfile, customer_id)
     now = _now()
     out = []
@@ -226,12 +414,52 @@ def delivery_options(db: Session, customer_id, farmer_ids: list[str]) -> list[di
                 "slots": [
                     {"starts_at": a.isoformat(), "ends_at": b.isoformat(), "label": window_label(a, b)} for a, b in slots[:12]
                 ],
+                "pods": _pod_options(db, customer_id, farmer, s, now),
             }
         )
     return out
 
 
-def check_slot(db: Session, farmer_id: str, customer_id, starts_at: str | None) -> dict:
+def _check_pod_slot(db: Session, farmer: FarmerProfile | None, s: FarmDeliverySettings | None, customer_id, pod_id: str, starts_at: str | None) -> dict:
+    try:
+        pid = uuid.UUID(pod_id)
+    except ValueError:
+        return {"error": "You can't order to that pod."}
+    match = next(((pod, member) for pod, member in _pods_of(db, customer_id) if pod.id == pid), None)
+    if match is None:
+        return {"error": "Your pod can't take orders right now."}
+    pod, member = match
+    if not _reaches(farmer, s, pod.latitude, pod.longitude):
+        return {"error": "This farm doesn't deliver to your pod's drop point."}
+    terms = _share_terms(s, pod_household_count(db, pod.id))
+    # The most it can come to; it's divided at the cutoff (app/pods/charging.py).
+    fee = terms["pod_delivery_fee"]
+    if not starts_at:
+        return {"error": "Choose a delivery time.", "delivery_fee": fee}
+    try:
+        wanted = datetime.fromisoformat(starts_at)
+    except ValueError:
+        wanted = None
+    for a, b in _pod_slots(db, farmer.id, s, pod, member, _now()):
+        if wanted is not None and wanted.tzinfo is not None and a == wanted:
+            return {
+                "starts_at": a,
+                "ends_at": b,
+                "label": window_label(a, b),
+                "delivery_fee": fee,
+                "address_line": _address_line(pod.address_street, pod.address_city, pod.address_state, pod.address_zip),
+                "pod_id": str(pod.id),
+                "pod_name": pod.name,
+                "pod_drop_version": pod.drop_version,
+                "pod_savings": terms["savings"],
+                "pod_full_fee": fee,
+                "pod_fee_low": terms["share"],
+                "charge_at": (a - timedelta(hours=s.cutoff_hours)).isoformat(),
+            }
+    return {"error": "That delivery time isn't available anymore. Pick another one.", "delivery_fee": fee}
+
+
+def check_slot(db: Session, farmer_id: str, customer_id, starts_at: str | None, pod_id: str | None = None) -> dict:
     """Checkout's validation of a chosen window. Returns the window and fee,
     or an 'error' for the customer — never raises, so one farm's problem
     doesn't break the whole preview (create_order refuses it instead)."""
@@ -241,6 +469,8 @@ def check_slot(db: Session, farmer_id: str, customer_id, starts_at: str | None) 
         return {"error": "This farm doesn't deliver yet."}
     farmer = db.get(FarmerProfile, fid)
     s = db.get(FarmDeliverySettings, fid)
+    if pod_id:
+        return _check_pod_slot(db, farmer, s, customer_id, pod_id, starts_at)
     customer = db.get(CustomerProfile, customer_id)
     reason = _unavailable_reason(farmer, s, customer)
     if reason:
@@ -291,15 +521,48 @@ def attach_to_run(db: Session, store_order: StoreOrder, customer_id) -> None:
         .with_for_update()
         .one()
     )
-    customer = db.get(CustomerProfile, customer_id)
-    stop = DeliveryStop(
-        id=uuid.uuid4(),
-        run_id=run.id,
-        kind="home",
-        latitude=customer.latitude if customer else None,
-        longitude=customer.longitude if customer else None,
-        status="pending",
-    )
+    if store_order.pod_id:
+        # A pod's orders share one stop. The run's lock (above) means two
+        # orders paid at once can't each create their own.
+        shared = (
+            db.query(DeliveryStop)
+            .filter(
+                DeliveryStop.run_id == run.id,
+                DeliveryStop.pod_id == store_order.pod_id,
+                DeliveryStop.pod_drop_version == store_order.pod_drop_version,
+                DeliveryStop.status.in_(("pending", "en_route")),
+            )
+            .first()
+        )
+        if shared:
+            store_order.delivery_stop_id = shared.id
+            if shared.status == "en_route":
+                store_order.status = "out_for_delivery"
+            return
+        pod = db.get(Pod, store_order.pod_id)
+        # Coordinates only if the drop point hasn't moved since this order was
+        # placed; without them the farmer still has the order's own address.
+        same_drop = pod is not None and pod.drop_version == store_order.pod_drop_version
+        stop = DeliveryStop(
+            id=uuid.uuid4(),
+            run_id=run.id,
+            kind="pod",
+            pod_id=store_order.pod_id,
+            pod_drop_version=store_order.pod_drop_version,
+            latitude=pod.latitude if same_drop else None,
+            longitude=pod.longitude if same_drop else None,
+            status="pending",
+        )
+    else:
+        customer = db.get(CustomerProfile, customer_id)
+        stop = DeliveryStop(
+            id=uuid.uuid4(),
+            run_id=run.id,
+            kind="home",
+            latitude=customer.latitude if customer else None,
+            longitude=customer.longitude if customer else None,
+            status="pending",
+        )
     # Rare: paid just as (or after) the farm set off — join the run en route,
     # at the end of the route.
     if run.status in ("in_progress", "completed"):
@@ -401,14 +664,22 @@ def get_run(db: Session, farmer_id, run_id: str) -> dict:
     run = _owned_run(db, farmer_id, run_id)
     stops = _stops(db, run.id)
     orders = _orders_by_stop(db, [s.id for s in stops])
+    pod_ids = {s.pod_id for s in stops if s.pod_id}
+    pods = {p.id: p for p in db.query(Pod).filter(Pod.id.in_(pod_ids)).all()} if pod_ids else {}
     out_stops = []
     for s in stops:
         entries = orders.get(s.id, [])
         first = entries[0][0] if entries else None
         active = s.status in ("pending", "en_route")
+        pod = pods.get(s.pod_id)
         out_stops.append(
             {
                 "id": str(s.id),
+                "kind": s.kind,
+                "pod_name": pod.name if pod else None,
+                # For the driver, only while there's still a delivery to make.
+                "access_notes": pod.access_notes if pod and active else None,
+                "shelter_note": pod.shelter_note if pod and active else None,
                 "sequence": s.sequence,
                 "status": s.status,
                 # Where to go — only while there's still a delivery to make.
@@ -429,7 +700,10 @@ def get_run(db: Session, farmer_id, run_id: str) -> dict:
                         "customer_name": customer.full_name,
                         # Only while there's still a delivery to coordinate.
                         "customer_phone": customer.phone if active else None,
-                        "items": [{"product_name": i.product_name, "quantity": i.quantity, "unit": i.unit} for i in its],
+                        "items": [
+                            {"product_name": i.product_name, "quantity": i.quantity, "unit": i.unit, "keep_cold": bool(i.keep_cold)}
+                            for i in its
+                        ],
                         "total": _money(so.total),
                         "service_fee": _money(so.service_fee),
                     }
@@ -480,7 +754,7 @@ def _next_stop_notices(db: Session, run: DeliveryRun) -> list[Notice]:
             Notice(
                 _customer_of(db, so),
                 "delivery_next",
-                {"farm_name": so.farm_name, "order_id": str(so.order_id)},
+                {"farm_name": so.farm_name, "order_id": str(so.order_id), "to_pod": nxt.kind == "pod"},
                 f"delivery_next:{so.id}",
             )
         )
@@ -589,13 +863,30 @@ def mark_delivered(db: Session, farmer_id, run_id: str, stop_id: str, photo_path
         Notice(
             _customer_of(db, so),
             "delivered",
-            {"farm_name": so.farm_name, "order_id": str(so.order_id), "has_photo": bool(stop.photo_path), "note": stop.note},
+            {
+                "farm_name": so.farm_name,
+                "order_id": str(so.order_id),
+                "has_photo": bool(stop.photo_path),
+                "note": stop.note,
+                "to_pod": stop.kind == "pod",
+                "drop_address": so.delivery_address_street,
+                "cold_hours": POD_COLD_PICKUP_HOURS if stop.kind == "pod" and _has_cold_items(db, so.id) else None,
+            },
             f"delivered:{so.id}",
         )
         for so in delivered
     ]
     notify_many(db, notices + _next_stop_notices(db, run))
     return get_run(db, farmer_id, run_id)
+
+
+def _has_cold_items(db: Session, store_order_id) -> bool:
+    return (
+        db.query(StoreOrderItem.id)
+        .filter(StoreOrderItem.store_order_id == store_order_id, StoreOrderItem.keep_cold.is_(True))
+        .first()
+        is not None
+    )
 
 
 def release_stop(db: Session, store_order: StoreOrder) -> DeliveryRun | None:
@@ -627,6 +918,55 @@ def notify_after_release(db: Session, run: DeliveryRun | None) -> None:
 
 
 # --- The customer's view ------------------------------------------------------------------
+
+
+def _pod_charge(db: Session, store_order: StoreOrder) -> dict | None:
+    if store_order.pod_full_fee is None:
+        return None
+    payment = db.query(Payment).filter(Payment.order_id == store_order.order_id).first()
+    label = {
+        "requires_payment_method": "not_placed",
+        AWAITING_CUTOFF: "awaiting",
+        CHARGING: "charging",
+        CHARGE_FAILED: "failed",
+        "canceled": "cancelled",
+    }.get(payment.status if payment else "", "charged")
+    s = db.get(FarmDeliverySettings, store_order.farmer_id)
+    placed = (
+        db.query(Order.customer_id)
+        .join(StoreOrder, StoreOrder.order_id == Order.id)
+        .join(Payment, Payment.order_id == Order.id)
+        .filter(
+            StoreOrder.pod_id == store_order.pod_id,
+            StoreOrder.farmer_id == store_order.farmer_id,
+            StoreOrder.delivery_window_starts_at == store_order.delivery_window_starts_at,
+            StoreOrder.status != "cancelled",
+            Payment.status.in_((*POD_PLACED_STATUSES, "succeeded")),
+        )
+        .distinct()
+        .count()
+    )
+    return {
+        "status": label,
+        "charge_at": (store_order.delivery_window_starts_at - timedelta(hours=s.cutoff_hours if s else 0)).isoformat(),
+        "households_ordered": placed,
+        "households_total": pod_household_count(db, store_order.pod_id) if store_order.pod_id else placed,
+        "share_now": pod_share(store_order.pod_full_fee, max(placed, 1)),
+        "full_fee": _money(store_order.pod_full_fee),
+        "failure_reason": payment.failure_reason if payment else None,
+    }
+
+
+def _pod_progress(db: Session, store_order: StoreOrder) -> dict:
+    charge = _pod_charge(db, store_order)
+    if not store_order.pod_id:
+        return {"pod_name": None, "collect_within_hours": None, "pod_charge": charge}
+    pod = db.get(Pod, store_order.pod_id)
+    return {
+        "pod_name": pod.name if pod else "Your pod",
+        "collect_within_hours": POD_COLD_PICKUP_HOURS if _has_cold_items(db, store_order.id) else None,
+        "pod_charge": charge,
+    }
 
 
 def progress_for(db: Session, store_order: StoreOrder) -> dict | None:
@@ -662,6 +1002,7 @@ def progress_for(db: Session, store_order: StoreOrder) -> dict | None:
         "delivered_at": stop.delivered_at.isoformat() if stop is not None and stop.delivered_at else None,
         "has_photo": bool(stop is not None and stop.photo_path),
         "note": stop.note if stop is not None else None,
+        **_pod_progress(db, store_order),
     }
 
 
@@ -718,12 +1059,14 @@ def photo_url(db: Session, store_order: StoreOrder) -> str | None:
 
 
 def customer_photo_paths(db: Session, customer_id) -> list[str]:
-    """Photos of a customer's doorstep — deleted with their account."""
+    """Photos of a customer's doorstep — deleted with their account. A pod's
+    drop point isn't only theirs, so its photo stays for the other members
+    (and goes after 30 days like every other)."""
     rows = (
         db.query(DeliveryStop.photo_path)
         .join(StoreOrder, StoreOrder.delivery_stop_id == DeliveryStop.id)
         .join(Order, Order.id == StoreOrder.order_id)
-        .filter(Order.customer_id == customer_id, DeliveryStop.photo_path.isnot(None))
+        .filter(Order.customer_id == customer_id, DeliveryStop.photo_path.isnot(None), DeliveryStop.kind == "home")
         .all()
     )
     return [p for (p,) in rows]

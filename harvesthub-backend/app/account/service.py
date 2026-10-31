@@ -40,6 +40,16 @@ def deletion_blockers(db: Session, user_id: str) -> list[str]:
         """),
         params,
     ).scalar_one()
+    # Pod orders placed but not charged yet aren't released to the farmer, but
+    # they're still orders: deleting the account would remove the saved card.
+    awaiting_charge = db.execute(
+        text("""
+            select count(*) from payments p
+            where p.customer_id = :uid and p.status in ('awaiting_cutoff', 'charging', 'charge_failed')
+        """),
+        params,
+    ).scalar_one()
+    as_customer += awaiting_charge
     if as_customer:
         blockers.append(f"You have {_orders_phrase(as_customer)} in progress. Pick them up or cancel them first.")
 
@@ -75,6 +85,20 @@ def deletion_blockers(db: Session, user_id: str) -> list[str]:
     ).scalar_one()
     if owed:
         blockers.append(f"You owe HarvestHub ${-owed:.2f} from cash orders. Contact support to settle it first.")
+
+    hosting = db.execute(
+        text("""
+            select count(*) from pods p
+            where p.host_id = :uid and p.status not in ('expired', 'dissolved')
+              and exists (
+                select 1 from pod_members m
+                where m.pod_id = p.id and m.status = 'active' and m.customer_id <> :uid
+              )
+        """),
+        params,
+    ).scalar_one()
+    if hosting:
+        blockers.append("You host a Neighborhood Pod with other members. Hand it to another member or end it first.")
 
     return blockers
 

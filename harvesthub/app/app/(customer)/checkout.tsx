@@ -9,6 +9,8 @@ import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { apiClient } from '../../lib/apiClient';
 import { useCheckoutDraft } from '../../contexts/CheckoutDraftContext';
 import { CheckoutFarmSection } from '../../components/customer/CheckoutFarmSection';
+import { useCardSetupSheet } from '../../lib/harvestPass';
+import { apiErrorMessage } from '../../lib/apiError';
 import type { CheckoutPreviewResponse } from '../../types/checkout';
 import type { CreateOrderRequest, CreateOrderResponse, OrderPaymentMethod } from '../../types/orders';
 
@@ -18,6 +20,7 @@ export default function CheckoutScreen() {
   const insets = useSafeAreaInsets();
   const { fulfillmentByFarm } = useCheckoutDraft();
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const saveCard = useCardSetupSheet();
 
   const farmerIds = useMemo<string[]>(() => {
     try {
@@ -38,6 +41,8 @@ export default function CheckoutScreen() {
   const [placingOrder, setPlacingOrder] = useState(false);
   const deliveryProblem = preview?.groups.find((g) => g.delivery_error)?.delivery_error ?? null;
   const canPlaceOrder = Boolean(paymentMethod) && !placingOrder && !deliveryProblem;
+  // A pod order saves a card, and is charged once at the farm's cutoff.
+  const podGroup = preview?.groups.find((g) => g.pod_id) ?? null;
 
   const loadPreview = useCallback(
     (promoOverrides: Record<string, string> = appliedPromoCodes) => {
@@ -53,6 +58,7 @@ export default function CheckoutScreen() {
             fulfillment_method: fulfillmentByFarm[farmerId]?.method ?? 'pickup',
             promo_code: promoOverrides[farmerId] ?? null,
             delivery_starts_at: fulfillmentByFarm[farmerId]?.deliverySlot ?? null,
+            pod_id: fulfillmentByFarm[farmerId]?.method === 'delivery' ? (fulfillmentByFarm[farmerId]?.podId ?? null) : null,
           })),
         })
         .then((res) => {
@@ -115,6 +121,7 @@ export default function CheckoutScreen() {
         farmer_id: farmerId,
         fulfillment_method: fulfillment?.method ?? 'pickup',
         delivery_starts_at: fulfillment?.method === 'delivery' ? fulfillment.deliverySlot : null,
+        pod_id: fulfillment?.method === 'delivery' ? fulfillment.podId : null,
         promo_code: appliedPromoCodes[farmerId] ?? null,
       };
     }),
@@ -128,6 +135,23 @@ export default function CheckoutScreen() {
       const { order, client_secret } = res.data;
 
       if (paymentMethod === 'cash_on_pickup' || !client_secret) {
+        router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
+        return;
+      }
+
+      if (order.payment?.charged_at_cutoff) {
+        const saved = await saveCard(client_secret, 'Save card and place order');
+        if (!saved) {
+          // No card, no order: don't leave an unplaced one behind.
+          apiClient.post(`/orders/${order.id}/cancel`, { reason: 'Left checkout' }).catch((err) => console.warn('Could not clear the order:', err));
+          return;
+        }
+        try {
+          await apiClient.post(`/orders/${order.id}/sync-payment-status`);
+        } catch (err) {
+          Alert.alert('Your order wasn\'t placed', apiErrorMessage(err, 'Please try again.'));
+          return;
+        }
         router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
         return;
       }
@@ -218,7 +242,7 @@ export default function CheckoutScreen() {
             <Text style={styles.paymentTitle}>Payment method</Text>
             <PaymentOption
               icon="credit-card"
-              label={Platform.OS === 'ios' ? 'Card or Apple Pay' : 'Card or Google Pay'}
+              label={podGroup ? 'Card, charged when orders close' : Platform.OS === 'ios' ? 'Card or Apple Pay' : 'Card or Google Pay'}
               selected={paymentMethod === 'card'}
               onPress={() => setPaymentMethod('card')}
             />
@@ -239,11 +263,22 @@ export default function CheckoutScreen() {
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>
-              {preview.groups.length} order{preview.groups.length === 1 ? '' : 's'} · Grand total
+              {podGroup ? 'The most you\'d pay' : `${preview.groups.length} order${preview.groups.length === 1 ? '' : 's'} · Grand total`}
             </Text>
             <Text style={styles.totalValue}>${preview.grand_total.toFixed(2)}</Text>
           </View>
-          <ContactSharingNotice farmNames={preview.groups.map((g) => g.farm_name)} paymentMethod={paymentMethod} />
+          {podGroup?.charge_at ? (
+            <View style={styles.notice}>
+              <MaterialIcons name="schedule" size={16} color={colors.textMuted} />
+              <Text style={styles.noticeText}>
+                <Text style={styles.noticeBold}>Nothing is charged now.</Text> Orders close{' '}
+                {new Date(podGroup.charge_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. The
+                delivery fee is then split among the members who ordered, and your saved card is charged once, for your exact total. You can
+                cancel for free until then.
+              </Text>
+            </View>
+          ) : null}
+          <ContactSharingNotice farmNames={preview.groups.map((g) => g.farm_name)} paymentMethod={paymentMethod} chargedAtCutoff={Boolean(podGroup)} />
           <Pressable
             style={[styles.placeOrderButton, !canPlaceOrder && styles.placeOrderButtonDisabled]}
             onPress={handlePlaceOrder}
@@ -253,7 +288,7 @@ export default function CheckoutScreen() {
               <ActivityIndicator size="small" color={colors.white} />
             ) : (
               <Text style={styles.placeOrderText}>
-                {deliveryProblem ? 'Fix the delivery above' : paymentMethod ? 'Place Order' : 'Select a payment method'}
+                {deliveryProblem ? 'Fix the delivery above' : !paymentMethod ? 'Select a payment method' : podGroup ? 'Place Order, Pay Later' : 'Place Order'}
               </Text>
             )}
           </Pressable>
@@ -267,13 +302,22 @@ export default function CheckoutScreen() {
 // shared with the farm and when. The backend only releases it to the farmer
 // once the order is fully placed — after a card payment succeeds, or at
 // placement for cash on pickup (store_orders.released_to_farmer_at, 0025).
-function ContactSharingNotice({ farmNames, paymentMethod }: { farmNames: string[]; paymentMethod: OrderPaymentMethod | null }) {
+function ContactSharingNotice({
+  farmNames,
+  paymentMethod,
+  chargedAtCutoff,
+}: {
+  farmNames: string[];
+  paymentMethod: OrderPaymentMethod | null;
+  chargedAtCutoff: boolean;
+}) {
   const farms =
     farmNames.length <= 1
       ? farmNames[0] ?? 'the farm'
       : `${farmNames.slice(0, -1).join(', ')} and ${farmNames[farmNames.length - 1]}`;
-  const when =
-    paymentMethod === 'card'
+  const when = chargedAtCutoff
+    ? 'only after your card is charged, when orders close'
+    : paymentMethod === 'card'
       ? 'only after your payment goes through'
       : paymentMethod === 'cash_on_pickup'
         ? 'as soon as you place the order'

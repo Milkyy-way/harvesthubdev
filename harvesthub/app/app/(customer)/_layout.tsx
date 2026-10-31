@@ -18,6 +18,10 @@ export default function CustomerLayout() {
         <Stack.Screen name="delete-account" />
         <Stack.Screen name="referral" />
         <Stack.Screen name="harvest-pass" />
+        <Stack.Screen name="pods/index" />
+        <Stack.Screen name="pods/new" />
+        <Stack.Screen name="pods/[id]" />
+        <Stack.Screen name="invite/[code]" />
       </Stack>
     </CheckoutDraftProvider>
   );

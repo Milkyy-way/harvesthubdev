@@ -7,6 +7,7 @@ from app.core.pricing import FARMER_COMMISSION_RATE
 from app.orders.models import Order, StoreOrder, StoreOrderItem
 from app.orders import service as orders_service
 from app.payments.models import Payment, Refund
+from app.pods.models import Pod
 from app.core.localtime import window_label
 
 # Which store order statuses each Orders-tab segment shows.
@@ -53,6 +54,8 @@ def _build(db: Session, rows: list) -> list[dict]:
         .all()
     )
     cancellations = orders_service.cancellations_for(db, store_order_ids)
+    pod_ids = {so.pod_id for so, _, _, _ in rows if so.pod_id}
+    pod_names = dict(db.query(Pod.id, Pod.name).filter(Pod.id.in_(pod_ids)).all()) if pod_ids else {}
 
     results = []
     for so, order, payment, customer in rows:
@@ -96,6 +99,7 @@ def _build(db: Session, rows: list) -> list[dict]:
                     else None
                 ),
                 "delivery_fee": float(so.delivery_fee or 0),
+                "pod_name": pod_names.get(so.pod_id),
                 "items": [
                     {
                         "product_name": i.product_name,
@@ -103,6 +107,7 @@ def _build(db: Session, rows: list) -> list[dict]:
                         "unit_price": float(i.unit_price),
                         "quantity": i.quantity,
                         "line_total": float(i.line_total),
+                        "keep_cold": bool(i.keep_cold),
                     }
                     for i in items_by_store_order.get(so.id, [])
                 ],

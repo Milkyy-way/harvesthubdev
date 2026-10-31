@@ -1,0 +1,22 @@
+  <h1>You're invited to a Neighborhood Pod</h1>
+  <p class="meta">Neighbors on HarvestHub sharing one drop point and one delivery day, and splitting the delivery fee from local farms among those who order.</p>
+
+  <div class="callout">
+    <p><strong>Have the app?</strong> <a href="harvesthub://invite/$code">Open your invite</a></p>
+    <p><strong>Your invite code:</strong> $code <button type="button" id="copy" style="margin-left:8px;font:inherit;font-size:14px;padding:2px 12px;border-radius:999px;border:1px solid #2F4F3B;background:transparent;color:#2F4F3B;">Copy</button></p>
+  </div>
+
+  <p>New to HarvestHub? Copy the code, get the app and sign up, then go to Account, Neighborhood Pods, and enter the code. New members get Harvest Pass free for their first month.</p>
+
+  <div class="callout">
+    <p><strong>iPhone:</strong> $ios_line</p>
+    <p><strong>Android:</strong> <a href="$android_url">Get it on Google Play</a></p>
+  </div>
+
+  <p>This invite runs out 72 hours after it was sent.</p>
+  <script>
+    document.getElementById('copy').addEventListener('click', function () {
+      var button = this;
+      navigator.clipboard.writeText('$code').then(function () { button.textContent = 'Copied'; });
+    });
+  </script>

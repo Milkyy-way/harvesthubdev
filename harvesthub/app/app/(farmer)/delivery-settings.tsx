@@ -35,6 +35,7 @@ export default function DeliverySettingsScreen() {
   const [settings, setSettings] = useState<DeliverySettings | null>(null);
   const [fee, setFee] = useState('');
   const [radiusText, setRadiusText] = useState('');
+  const [podFee, setPodFee] = useState('');
   const [saving, setSaving] = useState(false);
   const [newDay, setNewDay] = useState<number | null>(null);
   const [newStart, setNewStart] = useState<number | null>(null);
@@ -47,6 +48,7 @@ export default function DeliverySettingsScreen() {
           setSettings(res.data);
           setFee(res.data.delivery_fee.toFixed(2));
           setRadiusText(String(res.data.radius_miles));
+          setPodFee(res.data.pod_delivery_fee.toFixed(2));
         },
         (err) => Alert.alert("Couldn't load delivery settings", apiErrorMessage(err, 'Please try again.'))
       );
@@ -85,6 +87,11 @@ export default function DeliverySettingsScreen() {
       Alert.alert('Check the distance', 'Enter a distance from 1 to 50 miles.');
       return;
     }
+    const podFeeValue = Number(podFee);
+    if (!Number.isFinite(podFeeValue) || podFeeValue < 0 || podFeeValue > 50) {
+      Alert.alert('Check the pod delivery fee', 'Enter an amount from $0 to $50.');
+      return;
+    }
     setSaving(true);
     try {
       const res = await apiClient.put<DeliverySettings>('/farmers/me/delivery/settings', {
@@ -93,6 +100,8 @@ export default function DeliverySettingsScreen() {
         radius_miles: radiusValue,
         cutoff_hours: settings.cutoff_hours,
         windows: settings.windows,
+        offers_pod_delivery: settings.offers_delivery && settings.offers_pod_delivery,
+        pod_delivery_fee: podFeeValue,
       });
       setSettings(res.data);
       Alert.alert('Saved', res.data.offers_delivery ? 'Customers nearby can now choose delivery.' : 'Delivery is off.');
@@ -153,6 +162,34 @@ export default function DeliverySettingsScreen() {
           </View>
         </View>
         <Text style={styles.caption}>You keep the whole delivery fee — no commission is taken from it.</Text>
+
+        <Text style={styles.sectionTitle}>Neighborhood Pods</Text>
+        <View style={styles.toggleRow}>
+          <View style={styles.flex1}>
+            <Text style={styles.toggleLabel}>Deliver to pods</Text>
+            <Text style={styles.caption}>
+              Several customers near each other, one drop point: one stop for you, with all their orders. Off until you turn it on.
+            </Text>
+          </View>
+          <Switch
+            value={settings.offers_delivery && settings.offers_pod_delivery}
+            onValueChange={(v) => update({ offers_pod_delivery: v })}
+            disabled={!settings.offers_delivery}
+            trackColor={{ false: colors.border, true: colors.primaryMid }}
+            thumbColor={colors.white}
+            accessibilityLabel="Deliver to pods"
+          />
+        </View>
+        {settings.offers_delivery && settings.offers_pod_delivery ? (
+          <>
+            <Text style={styles.fieldLabel}>Fee for a pod&apos;s drop point ($)</Text>
+            <TextField value={podFee} onChangeText={setPodFee} keyboardType="decimal-pad" placeholder="5.00" />
+            <Text style={styles.caption}>
+              Split evenly among the members who order, and you keep all of it. They&apos;re charged when your orders close, and
+              their orders reach you then. It can&apos;t be more than your regular delivery fee.
+            </Text>
+          </>
+        ) : null}
 
         <Text style={styles.sectionTitle}>Orders close</Text>
         <View style={styles.chips}>

@@ -21,6 +21,8 @@ type Props = {
   delivery: FarmDeliveryOption | null;
   deliverySlot: string | null;
   onSelectDeliverySlot: (startsAt: string) => void;
+  podId: string | null;
+  onSelectPod: (podId: string | null) => void;
   readyToPlaceSeparately: boolean;
   onPlaceOrderSeparately: () => void;
 };
@@ -36,6 +38,8 @@ export function CartFarmSection({
   delivery,
   deliverySlot,
   onSelectDeliverySlot,
+  podId,
+  onSelectPod,
   readyToPlaceSeparately,
   onPlaceOrderSeparately,
 }: Props) {
@@ -98,6 +102,8 @@ export function CartFarmSection({
         delivery={delivery}
         deliverySlot={deliverySlot}
         onSelectDeliverySlot={onSelectDeliverySlot}
+        podId={podId}
+        onSelectPod={onSelectPod}
       />
 
       {readyToPlaceSeparately ? (

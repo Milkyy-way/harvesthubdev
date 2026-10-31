@@ -14,6 +14,7 @@ from app.delivery.schemas import (
     RunsOut,
 )
 from app.farmers.service import get_current_farmer
+from app.pods import charging as pod_charging
 
 # Farm delivery — see app/delivery/service.py. Couldn't-deliver uses the
 # farmer orders cancel endpoint (POST /farmers/me/orders/{id}/cancel).
@@ -35,11 +36,15 @@ def save_settings(payload: DeliverySettingsIn, db: Session = Depends(get_db), fa
         payload.radius_miles,
         payload.cutoff_hours,
         [w.model_dump() for w in payload.windows],
+        payload.offers_pod_delivery,
+        payload.pod_delivery_fee,
     )
 
 
 @farmer_router.get("/runs", response_model=RunsOut)
 def read_runs(db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
+    # In case the scheduled job is late: orders past their cutoff belong here.
+    pod_charging.settle_due(db, farmer_id=farmer.id)
     return service.list_runs(db, farmer.id)
 
 
@@ -50,6 +55,7 @@ def read_run(run_id: str, db: Session = Depends(get_db), farmer=Depends(get_curr
 
 @farmer_router.post("/runs/{run_id}/start", response_model=RunDetailOut)
 def start_run(run_id: str, db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
+    pod_charging.settle_run(db, farmer.id, run_id)
     return service.start_run(db, farmer.id, run_id)
 
 

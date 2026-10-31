@@ -22,6 +22,7 @@ def _out(product: Product, category: Category) -> dict:
         "quantity_available": product.quantity_available,
         "image_url": product.image_url,
         "tax_category": product.tax_category,
+        "keep_cold": bool(product.keep_cold),
         "is_active": product.is_active,
     }
 
@@ -85,6 +86,7 @@ def create_product(db: Session, farmer_id, payload: FarmerProductCreate) -> dict
         unit=payload.unit.strip(),
         quantity_available=payload.quantity_available,
         tax_category=payload.tax_category,
+        keep_cold=payload.keep_cold,
         is_active=payload.is_active,
     )
     db.add(product)
@@ -114,6 +116,8 @@ def update_product(db: Session, farmer_id, product_id: str, payload: FarmerProdu
         product.quantity_available = data["quantity_available"]
     if data.get("tax_category") is not None:
         product.tax_category = data["tax_category"]
+    if data.get("keep_cold") is not None:
+        product.keep_cold = data["keep_cold"]
     if "image_url" in data:
         if data["image_url"] is not None:
             _validate_image_url(data["image_url"], farmer_id)

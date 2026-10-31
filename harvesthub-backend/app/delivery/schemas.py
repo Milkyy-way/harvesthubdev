@@ -17,6 +17,8 @@ class DeliverySettingsIn(BaseModel):
     radius_miles: float = Field(gt=0, le=50)
     cutoff_hours: int = Field(ge=0, le=168)
     windows: list[DeliveryWindowIn] = Field(default_factory=list, max_length=21)
+    offers_pod_delivery: bool = False
+    pod_delivery_fee: float = Field(default=5.00, ge=0, le=50)
 
 
 class DeliveryWindowOut(BaseModel):
@@ -30,6 +32,8 @@ class DeliverySettingsOut(BaseModel):
     delivery_fee: float
     radius_miles: float
     cutoff_hours: int
+    offers_pod_delivery: bool
+    pod_delivery_fee: float  # for a drop point, split evenly across the pod's households
     windows: list[DeliveryWindowOut]
     farm_located: bool  # the radius is measured from the farm, so it must be on the map
 
@@ -60,6 +64,7 @@ class StopItemOut(BaseModel):
     product_name: str
     quantity: int
     unit: str
+    keep_cold: bool = False
 
 
 class StopOrderOut(BaseModel):
@@ -74,6 +79,10 @@ class StopOrderOut(BaseModel):
 
 class StopOut(BaseModel):
     id: str
+    kind: Literal["home", "pod"]
+    pod_name: Optional[str]
+    access_notes: Optional[str]  # a pod's gate or door code, while still to be delivered
+    shelter_note: Optional[str]  # where to leave it at a pod's drop point
     sequence: Optional[int]  # route order, once the run has started
     status: StopStatus
     address_line: Optional[str]  # only while still to be delivered
@@ -82,7 +91,7 @@ class StopOut(BaseModel):
     delivered_at: Optional[str]
     has_photo: bool
     note: Optional[str]
-    orders: list[StopOrderOut]  # one today; several at a pod drop point later
+    orders: list[StopOrderOut]  # one at a home; several at a pod's drop point
 
 
 class RunDetailOut(RunSummaryOut):
@@ -104,6 +113,17 @@ class DeliverySlotOut(BaseModel):
     label: str
 
 
+class PodDeliveryOptionOut(BaseModel):
+    pod_id: str  # send back as pod_id at checkout
+    pod_name: str
+    drop_address_line: str
+    delivery_fee: float  # the least they'd pay: every household orders
+    total_fee: float  # the farm's fee for the whole stop: the most they'd pay
+    households: int  # how many are in the pod
+    savings: float  # the most they'd save against this farm's home delivery fee
+    slots: list[DeliverySlotOut]  # this farm's windows on the pod's day
+
+
 class FarmDeliveryOptionOut(BaseModel):
     farmer_id: str
     offers_delivery: bool  # false: don't show a Delivery choice at all
@@ -112,10 +132,21 @@ class FarmDeliveryOptionOut(BaseModel):
     delivery_fee: float
     address_line: str  # deliveries go to the customer's saved address
     slots: list[DeliverySlotOut]
+    pods: list[PodDeliveryOptionOut] = []  # active pods they can order to instead
 
 
 class DeliveryOptionsOut(BaseModel):
     farms: list[FarmDeliveryOptionOut]
+
+
+class PodChargeOut(BaseModel):
+    status: Literal["not_placed", "awaiting", "charging", "failed", "charged", "cancelled"]
+    charge_at: str  # the farm's cutoff
+    households_ordered: int
+    households_total: int
+    share_now: float  # each household's share if orders closed now
+    full_fee: float
+    failure_reason: Optional[str]
 
 
 class DeliveryProgressOut(BaseModel):
@@ -127,6 +158,9 @@ class DeliveryProgressOut(BaseModel):
     delivered_at: Optional[str]
     has_photo: bool
     note: Optional[str]
+    pod_name: Optional[str] = None  # delivered to this pod's drop point
+    collect_within_hours: Optional[int] = None  # a pod order with cold items
+    pod_charge: Optional[PodChargeOut] = None  # how a pod order's charge stands
 
 
 class DeliveryPhotoOut(BaseModel):

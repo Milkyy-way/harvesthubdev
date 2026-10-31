@@ -26,9 +26,20 @@ const googleMapsAndroidKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY;
 // server. Anything else (eas submit, a production build) gets production.
 const variant = process.env.APP_VARIANT === 'development' ? 'development' : 'production';
 
+// iOS Universal Links: a tapped pod invite link (https://<host>/invite/CODE)
+// opens the app directly. Same host the app builds those links from
+// (constants/legal.ts); that host serves the file Apple checks
+// (harvesthub-backend/app/legal/router.py). A plain-http LAN address can't be
+// used, so a local build simply goes without.
+function inviteLinkDomains(): string[] {
+  const base = process.env.EXPO_PUBLIC_LEGAL_BASE_URL ?? process.env.EXPO_PUBLIC_API_BASE_URL;
+  return base?.startsWith('https://') ? [`applinks:${new URL(base).host}`] : [];
+}
+
 export default ({ config: baseConfig }: ConfigContext): ExpoConfig => {
   const config = {
     ...baseConfig,
+    ios: { ...baseConfig.ios, associatedDomains: inviteLinkDomains() },
     android: {
       ...baseConfig.android,
       ...(hasGoogleServices ? { googleServicesFile } : {}),

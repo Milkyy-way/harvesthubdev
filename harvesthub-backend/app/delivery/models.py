@@ -14,6 +14,10 @@ class FarmDeliverySettings(Base):
     delivery_fee = Column(Numeric(10, 2), nullable=False, default=5.00)  # the farm keeps all of it
     radius_miles = Column(Numeric(4, 1), nullable=False, default=10)
     cutoff_hours = Column(Integer, nullable=False, default=24)
+    # Neighborhood Pods (0035): whether the farm delivers to drop points, and
+    # its fee for a drop point, split evenly across the pod's households.
+    offers_pod_delivery = Column(Boolean, nullable=False, default=False)
+    pod_delivery_fee = Column(Numeric(10, 2), nullable=False, default=5.00)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -54,14 +58,16 @@ class DeliveryRun(Base):
 
 
 class DeliveryStop(Base):
-    """A place the run stops at — today one customer's home (one store
-    order); with Neighborhood Pods, a drop point serving several."""
+    """A place the run stops at — one customer's home (one store order), or
+    a Neighborhood Pod's drop point (all of that pod's orders on the run)."""
 
     __tablename__ = "delivery_stops"
 
     id = Column(UUID(as_uuid=True), primary_key=True)
     run_id = Column(UUID(as_uuid=True), nullable=False)
-    kind = Column(String, nullable=False, default="home")
+    kind = Column(String, nullable=False, default="home")  # 'home' | 'pod'
+    pod_id = Column(UUID(as_uuid=True), nullable=True)
+    pod_drop_version = Column(Integer, nullable=True)  # orders for a moved drop point don't share a stop
     sequence = Column(Integer, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)

@@ -43,13 +43,19 @@ class Settings(BaseSettings):
     # Shown on the public legal pages (/privacy, /terms, /delete-account).
     COMPANY_NAME: str = "HarvestHub"  # the registered company name once the LLC exists
     SUPPORT_EMAIL: str = "support@harvesthubmarket.com"
-    LEGAL_EFFECTIVE_DATE: str = "October 5, 2026"
+    LEGAL_EFFECTIVE_DATE: str = "October 31, 2026"
 
-    # Where the shared app link (/app) sends people. IOS_APP_URL stays unset
-    # until the iPhone app is in the App Store; until then iPhones get a page
-    # that says it's coming.
+    # Where the shared app link (/app) sends people. IOS_APP_URL can be the
+    # App Store link, or until then a TestFlight public link; unset, iPhones
+    # get a page that says it's coming.
     ANDROID_APP_URL: str = "https://play.google.com/store/apps/details?id=com.harvesthubmarket.app"
     IOS_APP_URL: str | None = None
+
+    # Lets a tapped invite link open the iPhone app directly (iOS Universal
+    # Links, served at /.well-known/apple-app-site-association). The 10
+    # characters at Apple Developer -> Membership details -> Team ID. Not
+    # secret. Unset = links open in the browser, with a button into the app.
+    APPLE_TEAM_ID: str | None = None
 
     class Config:
         env_file = ".env"

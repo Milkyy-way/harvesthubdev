@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 import stripe
 
 from app.orders.models import Order, StoreOrder, StoreOrderItem, OrderCancellation
-from app.payments.models import Payment, Refund, PaymentCancellation
+from app.payments.models import AWAITING_CUTOFF, POD_PLACED_STATUSES, Payment, Refund, PaymentCancellation
 from app.payments import stripe_client
 from app.products.models import Product
 from app.categories.models import Category
@@ -23,7 +23,10 @@ from app.ratings.schemas import SubmitRatingRequest
 from app.cart.service import _cart_totals
 from app.notifications.service import Notice, notify, notify_many
 from app.delivery import service as delivery_service
+from app.delivery.models import FarmDeliverySettings
 from app.customers.models import CustomerProfile
+from app.membership import service as membership_service
+from app.pods.models import Pod
 
 # Terminal from the customer's point of view — no further payment action
 # will change these without a new attempt (we don't build retries yet).
@@ -49,6 +52,10 @@ _FARMER_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_fo
 # Customers can't cancel a delivery that's already on its way (it isn't in
 # _CANCELLABLE_STORE_ORDER_STATUSES); they're told why.
 _ON_ITS_WAY = "This order is already on its way, so it can't be cancelled now."
+_POD_ORDERS_CLOSED = "Orders for this delivery have closed, so it can't be cancelled now."
+# A Neighborhood Pod order saves a card, and is charged at the farm's cutoff
+# (app/pods/charging.py).
+POD_ORDER_PURPOSE = "pod_order"
 
 
 def get_owned_order(db: Session, customer_id: str, order_id: str) -> Order:
@@ -158,6 +165,7 @@ def build_order_out(db: Session, order_id) -> dict:
             "payment_method": payment.payment_method,
             "status": payment.status,
             "failure_reason": payment.failure_reason,
+            "charged_at_cutoff": bool(payment.stripe_setup_intent_id),
         }
 
     return {
@@ -299,6 +307,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             fulfillment_method=g.fulfillment_method,
             promo_code=g.promo_code,
             delivery_starts_at=g.delivery_starts_at,
+            pod_id=g.pod_id,
         )
         for g in request.groups
     ]
@@ -316,7 +325,16 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{group['farm_name']}: {group['delivery_error']}"
             )
-    # Deliveries go to the customer's saved (and geocoded) address.
+    # A pod order is charged at its farm's cutoff, on its own.
+    is_pod_order = any(g["pod_id"] for g in preview["groups"])
+    if is_pod_order and len(preview["groups"]) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A pod order is charged at the farm's cutoff, so please place it on its own.",
+        )
+    stripe_customer = membership_service.get_or_create_stripe_customer(db, customer.id) if is_pod_order else None
+    # Deliveries go to the customer's saved (and geocoded) address, or their
+    # pod's drop point.
     home = db.get(CustomerProfile, customer.id) if deliveries else None
 
     order = Order(id=uuid.uuid4(), customer_id=customer.id)
@@ -330,7 +348,9 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
     released_at = datetime.now(timezone.utc) if request.payment_method == "cash_on_pickup" else None
 
     for group in preview["groups"]:
-        delivery = home if group["fulfillment_method"] == "delivery" else None
+        delivery = None
+        if group["fulfillment_method"] == "delivery":
+            delivery = db.get(Pod, uuid.UUID(group["pod_id"])) if group["pod_id"] else home
         store_order = StoreOrder(
             id=uuid.uuid4(),
             order_id=order.id,
@@ -347,6 +367,9 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             delivery_address_zip=delivery.address_zip if delivery else None,
             delivery_window_starts_at=group["delivery_window_starts_at"],
             delivery_window_ends_at=group["delivery_window_ends_at"],
+            pod_id=group["pod_id"],
+            pod_drop_version=group["pod_drop_version"],
+            pod_full_fee=group["pod_full_fee"],
             subtotal=group["subtotal"],
             promo_code=group["promo_code"],
             promo_discount=group["promo_discount"],
@@ -371,6 +394,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
                     unit_price=item["price"],
                     quantity=item["quantity"],
                     line_total=item["line_total"],
+                    keep_cold=item["keep_cold"],
                 )
             )
 
@@ -393,6 +417,21 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
         _commit_inventory_and_clear_cart(db, customer_id, order.id)
         db.commit()
         _notify_order_placed(db, order.id)
+    elif is_pod_order:
+        # Not placed until the card is saved (app/pods/charging.py).
+        try:
+            intent = stripe_client.create_setup_intent(
+                stripe_customer, {"purpose": POD_ORDER_PURPOSE, "profile_id": customer_id, "order_id": str(order.id)}
+            )
+        except stripe.error.StripeError as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not start saving your card: {getattr(e, 'user_message', None) or str(e)}",
+            )
+        payment.stripe_setup_intent_id = intent.id
+        client_secret = intent.client_secret
+        db.commit()
     else:
         try:
             intent = stripe_client.create_payment_intent(grand_total, "usd", str(order.id), customer_id)
@@ -410,11 +449,13 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
     return build_order_out(db, order.id), client_secret
 
 
-def _finalize_successful_payment(db: Session, order_id) -> None:
+def _finalize_successful_payment(db: Session, order_id, stock_taken: bool = False) -> None:
+    """stock_taken: a pod order, which took its stock when it was placed."""
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         return
-    _commit_inventory_and_clear_cart(db, str(order.customer_id), order_id)
+    if not stock_taken:
+        _commit_inventory_and_clear_cart(db, str(order.customer_id), order_id)
     # Paid = fully placed: the farmer can now see the order (and the
     # customer's name/phone, as the customer was told at checkout).
     db.query(StoreOrder).filter(StoreOrder.order_id == order_id, StoreOrder.status == "pending_payment").update(
@@ -500,7 +541,7 @@ def _stock_was_taken(payment: Payment | None, store_order: StoreOrder) -> bool:
     return (
         store_order.status == "pending_payment"
         and payment is not None
-        and payment.payment_method == "cash_on_pickup"
+        and (payment.payment_method == "cash_on_pickup" or payment.status in POD_PLACED_STATUSES)
     )
 
 
@@ -531,6 +572,23 @@ def _sync_cash_payment_status(db: Session, order_id, payment: Payment | None) ->
         payment.status = "succeeded"
     else:
         payment.status = "canceled"
+
+
+def _pod_orders_closed(db: Session, store_order: StoreOrder, payment: Payment | None) -> bool:
+    """Customers can't cancel a pod order once the farm's orders have closed
+    (decided with the user 2026-10-31): they've had until the cutoff to decide,
+    and the others' shares were worked out counting them. Before that it's free,
+    because nothing has been paid. A farm that can't deliver still refunds in
+    full, and an order never placed (no card saved) can always go."""
+    if store_order.pod_full_fee is None or payment is None or payment.status == "requires_payment_method":
+        return False
+    if store_order.status == "cancelled":
+        return False
+    if store_order.status != "pending_payment":
+        return True
+    s = db.get(FarmDeliverySettings, store_order.farmer_id)
+    cutoff = store_order.delivery_window_starts_at - timedelta(hours=s.cutoff_hours if s else 0)
+    return payment.status != AWAITING_CUTOFF or datetime.now(timezone.utc) >= cutoff
 
 
 def _refund_store_order(db: Session, payment: Payment, store_order: StoreOrder, reason: str | None) -> None:
@@ -566,6 +624,8 @@ def cancel_store_order(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
     if store_order.status == "out_for_delivery":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY)
+    if _pod_orders_closed(db, store_order, db.query(Payment).filter(Payment.order_id == order.id).first()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
     if store_order.status not in _CANCELLABLE_STORE_ORDER_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -596,6 +656,10 @@ def _cancel_one_store_order(
         _refund_store_order(db, payment, store_order, reason)
         payouts_service.handle_refund_ledger_adjustment(db, store_order)
         refunded_to_card = payment is not None and payment.payment_method == "card"
+    elif payment and payment.stripe_setup_intent_id and not payment.stripe_payment_intent_id:
+        # A pod order before its charge: no money has moved, so nothing to refund.
+        payment.status = "canceled"
+        db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason=reason))
     elif payment and payment.payment_method == "card" and payment.status not in _TERMINAL_PAYMENT_STATUSES:
         sibling_count = (
             db.query(StoreOrder)
@@ -649,6 +713,8 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
         )
 
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
+    if any(_pod_orders_closed(db, so, payment) for so in store_orders):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
     refundable = [so for so in store_orders if so.status in _REFUNDABLE_STORE_ORDER_STATUSES]
     pending = [so for so in store_orders if so.status == "pending_payment"]
 
@@ -660,7 +726,18 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
         db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
 
     if pending:
-        if payment and payment.payment_method == "card" and payment.status not in _TERMINAL_PAYMENT_STATUSES:
+        if payment and payment.stripe_setup_intent_id and not payment.stripe_payment_intent_id:
+            # A pod order before its charge: no money has moved.
+            stock_taken = {so.id: _stock_was_taken(payment, so) for so in pending}
+            payment.status = "canceled"
+            db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason=reason))
+            for so in pending:
+                if stock_taken[so.id]:
+                    _restore_stock_and_promo(db, so)
+                so.status = "cancelled"
+                db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
+            pending = []
+        elif payment and payment.payment_method == "card" and payment.status not in _TERMINAL_PAYMENT_STATUSES:
             try:
                 stripe_client.cancel_payment_intent(payment.stripe_payment_intent_id)
             except stripe.error.StripeError:

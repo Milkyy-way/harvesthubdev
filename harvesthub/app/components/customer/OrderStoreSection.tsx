@@ -4,6 +4,7 @@ import { colors, spacing, radius, fonts } from '../../constants/theme';
 import type { StoreOrder } from '../../types/orders';
 import { RatingStars } from './RatingStars';
 import { DeliveryTracker } from './DeliveryTracker';
+import { PodChargeCard } from './PodChargeCard';
 
 type Props = {
   orderId: string;
@@ -65,8 +66,15 @@ export function OrderStoreSection({
   // customer confirm pickup. A cash order is paid at pickup, so until then
   // it stays 'pending_payment' (shown as "Preparing", not "Awaiting payment").
   const preparing = !isDelivery && (storeOrder.status === 'paid' || (paysAtPickup && storeOrder.status === 'pending_payment'));
+  const podCharge = storeOrder.delivery?.pod_charge ?? null;
+  // Before its charge, a pod order's amounts are the most it can come to.
+  const beforeCharge = podCharge !== null && storeOrder.status === 'pending_payment' && podCharge.status !== 'cancelled';
   const statusLabel =
-    paysAtPickup && storeOrder.status === 'pending_payment'
+    podCharge?.status === 'awaiting'
+      ? 'Charged when orders close'
+      : podCharge?.status === 'failed'
+        ? 'Card declined'
+        : paysAtPickup && storeOrder.status === 'pending_payment'
       ? 'Preparing · pay at pickup'
       : paysAtPickup && storeOrder.status === 'ready_for_pickup'
         ? 'Ready · pay at pickup'
@@ -75,8 +83,10 @@ export function OrderStoreSection({
           : isDelivery && storeOrder.status === 'completed'
             ? 'Delivered'
             : STATUS_LABELS[storeOrder.status];
+  // A pod order can't be cancelled once the farm's orders have closed.
+  const podClosed = podCharge !== null && podCharge.status !== 'awaiting' && podCharge.status !== 'not_placed';
   const canCancel =
-    storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup';
+    !podClosed && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
   const canMarkReceived = storeOrder.status === 'ready_for_pickup';
 
   return (
@@ -101,9 +111,15 @@ export function OrderStoreSection({
         <Text style={styles.fulfillmentText} numberOfLines={2}>
           {storeOrder.fulfillment_method === 'pickup'
             ? `Pickup at ${addressLine}`
-            : `Delivery ${storeOrder.delivery?.window_label ?? ''} to ${addressLine}`}
+            : storeOrder.delivery?.pod_name
+              ? `Delivery ${storeOrder.delivery.window_label} to ${storeOrder.delivery.pod_name}'s drop point: ${addressLine}`
+              : `Delivery ${storeOrder.delivery?.window_label ?? ''} to ${addressLine}`}
         </Text>
       </View>
+
+      {podCharge && storeOrder.status === 'pending_payment' ? (
+        <PodChargeCard orderId={orderId} charge={podCharge} onChanged={onDeliveryUpdate} />
+      ) : null}
 
       {isDelivery && storeOrder.delivery && storeOrder.status !== 'pending_payment' ? (
         <DeliveryTracker
@@ -131,7 +147,12 @@ export function OrderStoreSection({
         {storeOrder.promo_discount > 0 ? (
           <BreakdownLine label={`Promo (${storeOrder.promo_code})`} value={-storeOrder.promo_discount} highlight />
         ) : null}
-        {storeOrder.fulfillment_method === 'delivery' ? <BreakdownLine label="Delivery fee" value={storeOrder.delivery_fee} /> : null}
+        {storeOrder.fulfillment_method === 'delivery' ? (
+          <BreakdownLine
+            label={podCharge ? (beforeCharge ? 'Your delivery share, at most' : 'Your delivery share') : 'Delivery fee'}
+            value={storeOrder.delivery_fee}
+          />
+        ) : null}
         {storeOrder.member_savings > 0 ? (
           <BreakdownLine label="Service fee · free with Harvest Pass" value={0} member />
         ) : (
@@ -139,7 +160,7 @@ export function OrderStoreSection({
         )}
         <BreakdownLine label="Tax" value={storeOrder.tax} />
         <View style={styles.divider} />
-        <BreakdownLine label="Total" value={storeOrder.total} bold />
+        <BreakdownLine label={beforeCharge ? 'The most you\'d pay' : 'Total'} value={storeOrder.total} bold />
         {storeOrder.refunded_amount > 0 ? <BreakdownLine label="Refunded" value={-storeOrder.refunded_amount} highlight /> : null}
       </View>
 
@@ -148,6 +169,9 @@ export function OrderStoreSection({
           Cancelled by the farm{storeOrder.cancellation_reason ? `: ${storeOrder.cancellation_reason}` : ''}.
           {storeOrder.refunded_amount > 0 ? ' Your refund goes back to your card.' : ''}
         </Text>
+      ) : null}
+      {podCharge?.status === 'charged' && storeOrder.status === 'paid' ? (
+        <Text style={styles.hint}>Orders have closed, so this order can&apos;t be cancelled now.</Text>
       ) : null}
       {preparing ? (
         <Text style={styles.hint}>The farm is packing your order — it&apos;ll show “Ready for pickup” here when it&apos;s ready.</Text>

@@ -17,6 +17,7 @@ export interface FarmerProduct {
   quantity_available: number;
   image_url: string | null;
   tax_category: TaxCategory;
+  keep_cold: boolean;
   is_active: boolean;
 }
 
@@ -28,6 +29,7 @@ export interface FarmerProductInput {
   unit: string;
   quantity_available: number;
   tax_category: TaxCategory;
+  keep_cold: boolean;
   is_active: boolean;
 }
 
@@ -39,6 +41,7 @@ export interface FarmerOrderItem {
   unit_price: number;
   quantity: number;
   line_total: number;
+  keep_cold: boolean;
 }
 
 export interface FarmerOrder {
@@ -53,6 +56,7 @@ export interface FarmerOrder {
   delivery_window_label: string | null; // delivery orders: "Fri, Nov 6 · 4–7 PM"
   delivery_address_line: string | null; // while active
   delivery_fee: number; // the farm keeps all of it
+  pod_name: string | null; // goes to this Neighborhood Pod's drop point
   items: FarmerOrderItem[];
   subtotal: number;
   promo_code: string | null;

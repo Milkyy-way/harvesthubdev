@@ -12,6 +12,7 @@ class FarmerProductCreate(BaseModel):
     unit: str = Field(min_length=1, max_length=30)
     quantity_available: int = Field(ge=0, le=100000)
     tax_category: TaxCategory = "raw"
+    keep_cold: bool = False
     is_active: bool = True
 
 
@@ -25,6 +26,7 @@ class FarmerProductUpdate(BaseModel):
     unit: Optional[str] = Field(default=None, min_length=1, max_length=30)
     quantity_available: Optional[int] = Field(default=None, ge=0, le=100000)
     tax_category: Optional[TaxCategory] = None
+    keep_cold: Optional[bool] = None
     is_active: Optional[bool] = None
     image_url: Optional[str] = None
 
@@ -40,4 +42,5 @@ class FarmerProductOut(BaseModel):
     quantity_available: int
     image_url: Optional[str]
     tax_category: TaxCategory
+    keep_cold: bool = False
     is_active: bool

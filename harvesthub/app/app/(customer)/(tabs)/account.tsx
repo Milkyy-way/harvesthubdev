@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { signOut } from '../../../lib/signOut';
@@ -74,6 +74,12 @@ export default function CustomerAccount() {
           label="Harvest Pass"
           caption={harvestPassCaption(pass)}
           onPress={() => router.push('/(customer)/harvest-pass')}
+        />
+        <SettingsRow
+          icon="groups"
+          label="Neighborhood Pods"
+          caption="Share a drop point with neighbors and pay less for delivery"
+          onPress={() => router.push('/(customer)/pods' as Href)}
         />
         <SettingsRow
           icon="share"

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { Slot, useGlobalSearchParams, useRouter, useSegments, type Href } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StripeProvider } from '@stripe/stripe-react-native';
@@ -11,6 +11,7 @@ import { Newsreader_600SemiBold, Newsreader_700Bold } from '@expo-google-fonts/n
 import { Manrope_800ExtraBold } from '@expo-google-fonts/manrope';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { resolveRedirect } from '../lib/routeGuard';
+import { rememberPodInvite, takePodInvite } from '../lib/pendingPodInvite';
 import { usePushNotifications } from '../lib/pushNotifications';
 // Defines the background location task for live delivery tracking — it must
 // exist as soon as the app's JS starts, so it's imported here.
@@ -36,6 +37,17 @@ function RootNavigation() {
   const { session, profile, farmerVerification, loading, passwordRecovery } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const { code: inviteCode } = useGlobalSearchParams<{ code?: string }>();
+
+  // A pod invite link opened before signing in: the guard below sends them to
+  // sign in or sign up, and the invite opens once they're in the customer app.
+  const inPodInvite = (segments as string[])[1] === 'invite';
+  if (inPodInvite && inviteCode && !loading && (!session || !profile?.role)) rememberPodInvite(inviteCode);
+  useEffect(() => {
+    if (loading || profile?.role !== 'customer' || segments[0] !== '(customer)') return;
+    const code = takePodInvite();
+    if (code) router.push(`/(customer)/invite/${code}` as Href);
+  }, [loading, profile?.role, segments, router]);
 
   // Once signed in to a real account (customer or farmer — farmers awaiting
   // approval too, so they hear about the decision), register this phone for

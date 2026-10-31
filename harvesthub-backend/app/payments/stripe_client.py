@@ -90,6 +90,29 @@ def retrieve_setup_intent(setup_intent_id: str) -> dict:
     return stripe.SetupIntent.retrieve(setup_intent_id, expand=["payment_method"]).to_dict()
 
 
+def charge_saved_card(
+    amount: float,
+    currency: str,
+    customer_id: str,
+    payment_method_id: str,
+    order_id: str,
+    profile_id: str,
+    idempotency_key: str,
+) -> stripe.PaymentIntent:
+    """A pod order at the farm's cutoff, with the customer not there. Raises
+    CardError if the card is declined or the bank wants them to confirm it."""
+    return stripe.PaymentIntent.create(
+        amount=to_cents(amount),
+        currency=currency,
+        customer=customer_id,
+        payment_method=payment_method_id,
+        off_session=True,
+        confirm=True,
+        metadata={"order_id": order_id, "customer_id": profile_id},
+        idempotency_key=idempotency_key,
+    )
+
+
 def harvest_pass_price_id(plan: str, interval_months: int, amount: float) -> str:
     """The Stripe Price for this plan at this amount — found by lookup key,
     or created (with the product) the first time. The amount is part of the

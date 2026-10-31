@@ -7,6 +7,7 @@ from app.orders import service
 from app.orders.schemas import CreateOrderRequest, CreateOrderResponse, OrderOut, CancelRequest, ReorderResponse
 from app.ratings.schemas import SubmitRatingRequest
 from app.delivery.schemas import DeliveryPhotoOut, TrackingOut
+from app.pods import charging as pod_charging
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -35,7 +36,14 @@ def read_order(order_id: str, db: Session = Depends(get_db), customer=Depends(ge
 
 @router.post("/{order_id}/sync-payment-status", response_model=OrderOut)
 def sync_payment(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    pod_charging.adopt_saved_card(db, customer.id, order_id)  # no-op unless it's a pod order
     return service.sync_payment_status(db, str(customer.id), order_id)
+
+
+@router.post("/{order_id}/pod-card")
+def new_pod_card(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    # A pod order's card was declined at the cutoff: save another, then sync.
+    return pod_charging.prepare_new_card(db, customer.id, order_id)
 
 
 @router.post("/{order_id}/cancel", response_model=OrderOut)

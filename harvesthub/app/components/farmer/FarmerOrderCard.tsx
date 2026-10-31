@@ -70,6 +70,7 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
           <MaterialIcons name="local-shipping" size={16} color={colors.textMuted} />
           <Text style={styles.paymentText}>
             Deliver {order.delivery_window_label}
+            {order.pod_name ? ` · ${order.pod_name} drop point` : ''}
             {order.delivery_address_line ? ` · ${order.delivery_address_line}` : ''}
           </Text>
         </View>
@@ -86,7 +87,7 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
         {order.items.map((item, index) => (
           <View key={`${item.product_name}-${index}`} style={styles.itemRow}>
             <Text style={styles.itemName} numberOfLines={1}>
-              {item.quantity} × {item.product_name} <Text style={styles.itemUnit}>({item.unit})</Text>
+              {item.quantity} × {item.product_name} <Text style={styles.itemUnit}>({item.unit}){item.keep_cold ? ' · keep cold' : ''}</Text>
             </Text>
             <Text style={styles.itemTotal}>${item.line_total.toFixed(2)}</Text>
           </View>
