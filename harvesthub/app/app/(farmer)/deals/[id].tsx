@@ -34,6 +34,7 @@ export default function DealScreen() {
   const [goal, setGoal] = useState('');
   const [capacity, setCapacity] = useState('');
   const [reason, setReason] = useState('');
+  const [extendDays, setExtendDays] = useState(2);
   const [busy, setBusy] = useState(false);
 
   const show = (d: Deal) => {
@@ -61,6 +62,7 @@ export default function DealScreen() {
   }
 
   const open = OPEN_DEAL_STATUSES.includes(deal.status);
+  const needsReason = deal.status === 'goal_met' || deal.status === 'unlocked';
 
   const run = async (action: () => Promise<void>, failure: string) => {
     setBusy(true);
@@ -115,8 +117,34 @@ export default function DealScreen() {
       },
     ]);
 
-  const cancel = () =>
-    Alert.alert('Cancel this deal?', 'Its stock goes back to your regular listing. This can\'t be undone.', [
+  const extend = () =>
+    Alert.alert(
+      `Add ${extendDays} ${extendDays === 1 ? 'day' : 'days'}?`,
+      'You can only do this once. Everyone who has joined is told, and they may withdraw.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Add time',
+          onPress: () =>
+            run(async () => {
+              const res = await apiClient.post<Deal>(`/farmers/me/deals/${deal.id}/extend`, { days: extendDays });
+              show(res.data);
+            }, "Couldn't extend the deal"),
+        },
+      ]
+    );
+
+  const cancel = () => {
+    if (needsReason && !reason.trim()) {
+      Alert.alert('Tell customers why', 'This deal has reached its goal, so cancelling needs a reason, such as crop loss.');
+      return;
+    }
+    Alert.alert(
+      'Cancel this deal?',
+      deal.status === 'unlocked'
+        ? 'Everyone is refunded in full, and each order you cancel costs you its service fee, like any order a farm can\'t fill. This stays on your record.'
+        : 'Nobody is charged, and its stock goes back to your regular listing. This can\'t be undone.',
+      [
       { text: 'Keep it', style: 'cancel' },
       {
         text: 'Cancel deal',
@@ -127,7 +155,9 @@ export default function DealScreen() {
             show(res.data);
           }, "Couldn't cancel the deal"),
       },
-    ]);
+      ]
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -149,6 +179,36 @@ export default function DealScreen() {
           {deal.share_label} for ${deal.payout.share_price.toFixed(2)}
           <Text style={styles.regular}>  regular ${deal.payout.regular_share_price.toFixed(2)}</Text>
         </Text>
+
+        {deal.status !== 'draft' && deal.status !== 'scheduled' ? (
+          <>
+            <Text style={styles.progress}>
+              {deal.households} of {deal.goal} households · {deal.shares_claimed} of {deal.capacity} shares
+            </Text>
+            <View style={styles.track}>
+              <View
+                style={[
+                  styles.fill,
+                  { width: `${Math.min((deal.households / Math.max(deal.goal, 1)) * 100, 100)}%` },
+                  deal.households >= deal.goal && styles.fillDone,
+                ]}
+              />
+            </View>
+            {deal.status === 'unlocked' ? (
+              <Text style={styles.caption}>
+                {deal.households_paid} paid so far. Their orders are in your Orders tab, and any delivery ones are on that day&apos;s run.
+              </Text>
+            ) : null}
+            {deal.status === 'expired' ? (
+              <Text style={styles.caption}>
+                Nobody was charged.
+                {deal.reserved_quantity > 0 && deal.fallback_ends_at
+                  ? ` Members who joined can buy at your regular price until ${when(deal.fallback_ends_at)}, then the rest of your stock goes back on sale.`
+                  : ' Your stock is back on sale.'}
+              </Text>
+            ) : null}
+          </>
+        ) : null}
 
         <Row label="Households to unlock" value={String(deal.goal)} />
         <Row label="Shares available" value={String(deal.capacity)} />
@@ -202,8 +262,42 @@ export default function DealScreen() {
               {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryText}>Save changes</Text>}
             </Pressable>
 
+            {deal.can_extend ? (
+              <>
+                <Text style={styles.sectionTitle}>Give it more time</Text>
+                <Text style={styles.caption}>You&apos;re close to your goal. You can add time once.</Text>
+                <View style={styles.extendRow}>
+                  {[1, 2].map((n) => (
+                    <Pressable
+                      key={n}
+                      style={[styles.chip, extendDays === n && styles.chipSelected]}
+                      onPress={() => setExtendDays(n)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: extendDays === n }}
+                    >
+                      <Text style={[styles.chipText, extendDays === n && styles.chipTextSelected]}>
+                        {n} {n === 1 ? 'day' : 'days'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                  <Pressable style={styles.extendButton} onPress={extend} disabled={busy}>
+                    <Text style={styles.secondaryText}>Add time</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {open || deal.status === 'unlocked' ? (
+          <>
             <Text style={styles.sectionTitle}>Cancel the deal</Text>
-            <TextField value={reason} onChangeText={setReason} placeholder="Why? For example, crop loss (optional)" maxLength={300} />
+            <TextField
+              value={reason}
+              onChangeText={setReason}
+              placeholder={needsReason ? 'Why? For example, crop loss' : 'Why? For example, crop loss (optional)'}
+              maxLength={300}
+            />
             <Pressable style={styles.secondary} onPress={cancel} disabled={busy}>
               <Text style={styles.dangerText}>Cancel deal</Text>
             </Pressable>
@@ -240,6 +334,23 @@ const styles = StyleSheet.create({
   title: { fontFamily: fonts.headlineBold, fontSize: 26, lineHeight: 32, color: colors.text, marginTop: 2 },
   price: { fontSize: 15, fontWeight: '700', color: colors.primaryDark, marginTop: 2, marginBottom: spacing.md },
   regular: { fontSize: 13, fontWeight: '400', color: colors.textMuted },
+  progress: { fontSize: 14, fontWeight: '700', color: colors.primaryDark, marginBottom: spacing.xs },
+  track: { height: 10, borderRadius: radius.pill, backgroundColor: colors.border, overflow: 'hidden', marginBottom: spacing.sm },
+  fill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.primary },
+  fillDone: { backgroundColor: colors.accent },
+  extendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.sm },
+  extendButton: { paddingHorizontal: spacing.md, paddingVertical: 8 },
+  chip: {
+    borderRadius: radius.pill,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { fontSize: 12.5, fontWeight: '600', color: colors.text },
+  chipTextSelected: { color: colors.white },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

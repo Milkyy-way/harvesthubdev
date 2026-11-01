@@ -90,7 +90,7 @@ export default function DealsScreen() {
                   {item.product_name}
                 </Text>
                 <Text style={styles.detail}>
-                  {item.share_label} · ${item.payout.share_price.toFixed(2)} · goal {item.goal} households
+                  {item.share_label} · ${item.payout.share_price.toFixed(2)} · {item.households} of {item.goal} households
                 </Text>
                 <Text style={[styles.status, open && styles.statusOpen]}>{DEAL_STATUS_LABELS[item.status]}</Text>
               </View>

@@ -940,6 +940,18 @@ def notify_after_release(db: Session, run: DeliveryRun | None) -> None:
 # --- The customer's view ------------------------------------------------------------------
 
 
+def unavailable_reason(farmer, settings, customer) -> str | None:
+    return _unavailable_reason(farmer, settings, customer)
+
+
+def windows_of(db: Session, farmer_id) -> list:
+    return _windows(db, farmer_id)
+
+
+def address_line_of(customer: CustomerProfile) -> str:
+    return _address_line(customer.street_line, customer.address_city, customer.address_state, customer.address_zip)
+
+
 def _pod_charge(db: Session, store_order: StoreOrder) -> dict | None:
     if store_order.pod_full_fee is None:
         return None

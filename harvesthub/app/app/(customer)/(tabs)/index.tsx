@@ -12,6 +12,7 @@ import { SavingsTicker } from '../../../components/customer/SavingsTicker';
 import { HarvestPassBanner } from '../../../components/customer/HarvestPassBanner';
 import { HarvestPassWelcome } from '../../../components/customer/HarvestPassWelcome';
 import { PodsHomeCard } from '../../../components/customer/PodsHomeCard';
+import { DealsHomeRail } from '../../../components/customer/DealsHomeRail';
 import { FarmerSpotlightRail } from '../../../components/customer/FarmerSpotlightRail';
 import { HarvestPicksRail } from '../../../components/customer/HarvestPicksRail';
 import { CategoryRail } from '../../../components/customer/CategoryRail';
@@ -27,6 +28,7 @@ import type {
 import type { DashboardSummary } from '../../../types/dashboard';
 import type { MembershipOverview } from '../../../types/membership';
 import type { PodSummary } from '../../../types/pods';
+import type { CustomerDealCard } from '../../../types/deals';
 
 const PAGE_SIZE = 20;
 
@@ -52,6 +54,7 @@ export default function CustomerHome() {
   const [savingsAmount, setSavingsAmount] = useState<number | null>(null);
   const [membership, setMembership] = useState<MembershipOverview | null>(null);
   const [pods, setPods] = useState<PodSummary[] | null>(null);
+  const [deals, setDeals] = useState<CustomerDealCard[]>([]);
 
   const avatarInitial = (profile?.full_name?.trim()?.[0] ?? 'H').toUpperCase();
 
@@ -101,6 +104,10 @@ export default function CustomerHome() {
       apiClient.get<{ pods: PodSummary[] }>('/pods').then(
         (res) => setPods(res.data.pods),
         (err) => console.warn('Could not load pods:', err)
+      );
+      apiClient.get<{ deals: CustomerDealCard[] }>('/deals').then(
+        (res) => setDeals(res.data.deals),
+        (err) => console.warn('Could not load group deals:', err)
       );
     }, [])
   );
@@ -219,6 +226,7 @@ export default function CustomerHome() {
                 {savingsAmount != null && savingsAmount > 0 ? <SavingsTicker amount={savingsAmount} /> : null}
                 {membership ? <HarvestPassBanner overview={membership} /> : null}
                 <PodsHomeCard pods={pods} />
+                <DealsHomeRail deals={deals} />
                 <FarmerSpotlightRail items={spotlight} onPressFarmer={openFarm} />
                 <HarvestPicksRail items={harvestPicks} />
               </>

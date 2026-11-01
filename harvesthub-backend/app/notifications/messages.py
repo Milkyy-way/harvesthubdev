@@ -343,22 +343,22 @@ def pod_charge_failed(ctx: dict) -> Message:
         channels=(PUSH, EMAIL, SMS),
         url=f"/(customer)/orders/{ctx['order_id']}",
         email_paragraphs=[
-            f"We couldn't charge {_money(ctx['amount'])} to your card for your pod order from {ctx['farm_name']}.",
+            f"We couldn't charge {_money(ctx['amount'])} to your card for your order from {ctx['farm_name']}.",
             "We'll try once more soon. To keep your order, open it in the app and use a different card.",
         ],
-        sms=_sms(f"Your card was declined for your {ctx['farm_name']} pod order. Open the app to update it and keep your order."),
+        sms=_sms(f"Your card was declined for your {ctx['farm_name']} order. Open the app to update it and keep your order."),
     )
 
 
 def pod_charge_cancelled(ctx: dict) -> Message:
     """ctx: farm_name, order_id."""
     return Message(
-        title="Your pod order was cancelled",
+        title="Your order was cancelled",
         body=f"We couldn't charge your card, so your {ctx['farm_name']} order was cancelled. You haven't been charged.",
         channels=(PUSH, EMAIL),
         url=f"/(customer)/orders/{ctx['order_id']}",
         email_paragraphs=[
-            f"We couldn't charge your card, so your pod order from {ctx['farm_name']} was cancelled. You haven't been charged.",
+            f"We couldn't charge your card, so your order from {ctx['farm_name']} was cancelled. You haven't been charged.",
         ],
     )
 
@@ -427,6 +427,159 @@ def pod_membership_lapsing(ctx: dict) -> Message:
             "Join Harvest Pass in the app (Account → Harvest Pass) before then to stay.",
         ],
     )
+
+
+# --- Group deals -----------------------------------------------------------------------
+
+
+def _deal_url(ctx: dict) -> str:
+    return f"/(customer)/deals/{ctx['deal_id']}"
+
+
+def _farmer_deal_url(ctx: dict) -> str:
+    return f"/(farmer)/deals/{ctx['deal_id']}"
+
+
+def deal_joined(ctx: dict) -> Message:
+    """ctx: deal_id, product_name, farm_name, goal, deadline_at, households."""
+    when = _when(ctx["deadline_at"])
+    return Message(
+        title="You're in",
+        body=f"{ctx['households']} of {ctx['goal']} households for {ctx['product_name']}. You're only charged if the deal unlocks.",
+        channels=(PUSH, EMAIL),
+        url=_deal_url(ctx),
+        email_paragraphs=[
+            f"You've joined the group deal on {ctx['product_name']} from {ctx['farm_name']}.",
+            f"Your card has been saved, and nothing has been charged. It closes on {when}: if {ctx['goal']} households have "
+            "joined by then, your card is charged once. If not, you pay nothing.",
+            "You can withdraw until 12 hours before it closes.",
+        ],
+    )
+
+
+def deal_progress(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus milestone ('50', '80' or 'goal')."""
+    left = max(ctx["goal"] - ctx["households"], 0)
+    if ctx["milestone"] == "goal":
+        title, body = "The deal has reached its goal", f"{ctx['product_name']}: you'll be charged when it closes, as long as it stays there."
+    elif ctx["milestone"] == "80":
+        title, body = f"Just {left} more to unlock", f"{ctx['product_name']} is almost there. Share it with a neighbor."
+    else:
+        title, body = "Halfway there", f"{ctx['households']} of {ctx['goal']} households have joined the {ctx['product_name']} deal."
+    return Message(title=title, body=body, channels=(PUSH,), url=_deal_url(ctx))
+
+
+def deal_last_day(ctx: dict) -> Message:
+    """ctx: as deal_joined."""
+    left = max(ctx["goal"] - ctx["households"], 0)
+    return Message(
+        title="Less than a day left",
+        body=f"{ctx['product_name']} needs {left} more. Invite a neighbor before it closes.",
+        channels=(PUSH,),
+        url=_deal_url(ctx),
+    )
+
+
+def deal_changed(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus share_price and/or new_goal."""
+    parts = []
+    if ctx.get("share_price") is not None:
+        parts.append(f"the price is now {_money(ctx['share_price'])}")
+    if ctx.get("new_goal") is not None:
+        parts.append(f"the goal is now {ctx['new_goal']} households")
+    return Message(
+        title="Better terms on your group deal",
+        body=f"{ctx['product_name']}: {' and '.join(parts)}.",
+        channels=(PUSH,),
+        url=_deal_url(ctx),
+    )
+
+
+def deal_extended(ctx: dict) -> Message:
+    """ctx: as deal_joined."""
+    when = _when(ctx["deadline_at"])
+    return Message(
+        title="Your group deal has more time",
+        body=f"{ctx['product_name']} now closes {when}. You can withdraw until 12 hours before.",
+        channels=(PUSH, EMAIL),
+        url=_deal_url(ctx),
+        email_paragraphs=[
+            f"{ctx['farm_name']} has given the {ctx['product_name']} deal more time. It now closes on {when}.",
+            "You're still in. If you'd rather not be, you can withdraw until 12 hours before it closes.",
+        ],
+    )
+
+
+def deal_unlocked(ctx: dict) -> Message:
+    """ctx: as deal_joined."""
+    return Message(
+        title="It unlocked!",
+        body=f"The {ctx['product_name']} deal reached its goal. We're charging your card now.",
+        channels=(PUSH,),
+        url=_deal_url(ctx),
+    )
+
+
+def deal_expired(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus regular_offer."""
+    if ctx["regular_offer"]:
+        body = f"The {ctx['product_name']} deal didn't reach its goal, so you weren't charged. You have 24 hours to buy at the regular price."
+    else:
+        body = f"The {ctx['product_name']} deal didn't reach its goal, so you weren't charged."
+    return Message(title="This one didn't make it", body=body, channels=(PUSH, EMAIL), url=_deal_url(ctx), email_paragraphs=[body])
+
+
+def deal_cancelled(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus reason."""
+    reason = f" Their reason: {ctx['reason']}." if ctx.get("reason") else ""
+    body = f"{ctx['farm_name']} cancelled the {ctx['product_name']} deal, so you weren't charged.{reason}"
+    return Message(title="A group deal was cancelled", body=body, channels=(PUSH, EMAIL), url=_deal_url(ctx), email_paragraphs=[body])
+
+
+def deal_undeliverable(ctx: dict) -> Message:
+    """ctx: as deal_joined."""
+    body = f"{ctx['farm_name']} can't deliver your {ctx['product_name']} deal to your current address, so you weren't charged."
+    return Message(title="We couldn't include your order", body=body, channels=(PUSH, EMAIL), url=_deal_url(ctx), email_paragraphs=[body])
+
+
+def deal_farmer_progress(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus milestone."""
+    title = "Your deal reached its goal" if ctx["milestone"] == "goal" else f"Your deal is {ctx['milestone']}% of the way there"
+    return Message(
+        title=title,
+        body=f"{ctx['households']} of {ctx['goal']} households have joined {ctx['product_name']}.",
+        channels=(PUSH,),
+        url=_farmer_deal_url(ctx),
+    )
+
+
+def deal_farmer_last_day(ctx: dict) -> Message:
+    """ctx: as deal_joined."""
+    return Message(
+        title="Your deal is short of its goal",
+        body=f"{ctx['product_name']}: {ctx['households']} of {ctx['goal']} households with less than a day left. You can lower the goal.",
+        channels=(PUSH, EMAIL),
+        url=_farmer_deal_url(ctx),
+        email_paragraphs=[
+            f"Your {ctx['product_name']} deal has {ctx['households']} of {ctx['goal']} households with less than a day left.",
+            "If it doesn't reach the goal, nobody is charged and your stock goes back on sale. You can lower the goal in the app.",
+        ],
+    )
+
+
+def deal_farmer_unlocked(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus households, earnings."""
+    body = (
+        f"{ctx['product_name']}: {ctx['households']} households, about {_money(ctx['earnings'])} after commission. "
+        "Their orders reach you as each card is charged."
+    )
+    return Message(title="Your deal unlocked", body=body, channels=(PUSH, EMAIL), url=_farmer_deal_url(ctx), email_paragraphs=[body])
+
+
+def deal_farmer_expired(ctx: dict) -> Message:
+    """ctx: as deal_joined, plus households."""
+    body = f"{ctx['product_name']} ended with {ctx['households']} of {ctx['goal']} households. Nobody was charged, and your stock is back on sale."
+    return Message(title="Your deal didn't reach its goal", body=body, channels=(PUSH, EMAIL), url=_farmer_deal_url(ctx), email_paragraphs=[body])
 
 
 def pod_promo(ctx: dict) -> Message:
@@ -598,6 +751,19 @@ BUILDERS = {
     "pod_membership_lapsing": pod_membership_lapsing,
     "pod_removed": pod_removed,
     "pod_promo": pod_promo,
+    "deal_joined": deal_joined,
+    "deal_progress": deal_progress,
+    "deal_last_day": deal_last_day,
+    "deal_changed": deal_changed,
+    "deal_extended": deal_extended,
+    "deal_unlocked": deal_unlocked,
+    "deal_expired": deal_expired,
+    "deal_cancelled": deal_cancelled,
+    "deal_undeliverable": deal_undeliverable,
+    "deal_farmer_progress": deal_farmer_progress,
+    "deal_farmer_last_day": deal_farmer_last_day,
+    "deal_farmer_unlocked": deal_farmer_unlocked,
+    "deal_farmer_expired": deal_farmer_expired,
     "pod_new_host": pod_new_host,
     "pod_drop_changed": pod_drop_changed,
     "pod_drop_moved": pod_drop_moved,

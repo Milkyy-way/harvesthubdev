@@ -53,6 +53,7 @@ export interface StoreOrder {
   total: number;
   refunded_amount: number;
   status: StoreOrderStatus;
+  group_deal_id: string | null;
   cancelled_by: 'customer' | 'farmer' | 'admin' | null;
   cancellation_reason: string | null;
   items: OrderLineItem[];

@@ -21,6 +21,8 @@ export default function CustomerLayout() {
         <Stack.Screen name="pods/index" />
         <Stack.Screen name="pods/new" />
         <Stack.Screen name="pods/[id]" />
+        <Stack.Screen name="deals/index" />
+        <Stack.Screen name="deals/[id]" />
         <Stack.Screen name="invite/[code]" />
       </Stack>
     </CheckoutDraftProvider>

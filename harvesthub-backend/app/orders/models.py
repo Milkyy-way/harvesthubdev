@@ -60,6 +60,9 @@ class StoreOrder(Base):
     # The fee the pod's share is divided from. Until the cutoff, delivery_fee
     # and total hold the most this order can come to (app/pods/charging.py).
     pod_full_fee = Column(Numeric(10, 2), nullable=True)
+    # From a group deal (0037): its stock was set aside by the deal, and it's
+    # charged on a saved card (app/deals/closing.py).
+    group_deal_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -76,6 +79,9 @@ class StoreOrderItem(Base):
     quantity = Column(Integer, nullable=False)
     line_total = Column(Numeric(10, 2), nullable=False)
     keep_cold = Column(Boolean, nullable=False, default=False)  # snapshot, for pod drop points (0035)
+    # A group deal's share isn't one listing unit (a 2.5 lb bag of a by-the-lb
+    # listing): how much stock a cancelled line returns (0037).
+    stock_units = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
 

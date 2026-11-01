@@ -46,6 +46,7 @@ class StoreOrderOut(BaseModel):
     pickup_address_state: Optional[str]
     pickup_address_zip: Optional[str]
     delivery_address_street: Optional[str]
+    group_deal_id: Optional[str] = None
     delivery_address_city: Optional[str]
     delivery_address_state: Optional[str]
     delivery_address_zip: Optional[str]

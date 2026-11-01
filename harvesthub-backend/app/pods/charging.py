@@ -298,7 +298,8 @@ def _retry_failed(db: Session, now: datetime) -> int:
         order = db.get(Order, payment.order_id)
         so = _store_order(db, order.id)
         tried = payment.charge_attempts or 0
-        if tried >= _MAX_ATTEMPTS or now >= so.delivery_window_starts_at:
+        # A group deal's pickup order has no window, just its one retry.
+        if tried >= _MAX_ATTEMPTS or (so.delivery_window_starts_at and now >= so.delivery_window_starts_at):
             _give_up(db, order, payment, so)
             done += 1
         elif payment.last_charge_attempt_at and now >= payment.last_charge_attempt_at + RETRY_AFTER:

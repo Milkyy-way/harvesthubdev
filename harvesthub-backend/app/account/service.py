@@ -100,6 +100,16 @@ def deletion_blockers(db: Session, user_id: str) -> list[str]:
     if hosting:
         blockers.append("You host a Neighborhood Pod with other members. Hand it to another member or end it first.")
 
+    running_deals = db.execute(
+        text("""
+            select count(*) from group_deals
+            where farmer_id = :uid and status in ('scheduled', 'early_access', 'live')
+        """),
+        params,
+    ).scalar()
+    if running_deals:
+        blockers.append("You have a group deal running. Cancel it first." if running_deals == 1 else f"You have {running_deals} group deals running. Cancel them first.")
+
     return blockers
 
 

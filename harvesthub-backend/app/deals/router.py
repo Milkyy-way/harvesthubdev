@@ -2,8 +2,26 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.customers.service import get_current_customer
+from app.deals import closing
+from app.deals import customer as customer_side
 from app.deals import service
-from app.deals.schemas import DealCancelIn, DealChangeIn, DealIn, DealListOut, DealOut, DealPreviewOut, DealSetupOut
+from app.deals.schemas import (
+    CustomerDealOut,
+    DealCancelIn,
+    DealCardListOut,
+    DealChangeIn,
+    DealExtendIn,
+    DealIn,
+    DealJoinIn,
+    DealJoinOut,
+    DealListOut,
+    DealOut,
+    DealPreviewOut,
+    DealQuoteIn,
+    DealQuoteOut,
+    DealSetupOut,
+)
 from app.farmers.service import get_current_farmer
 
 # Threshold group deals, the farmer's side — see app/deals/service.py. Scoped to
@@ -60,3 +78,47 @@ def change_deal(deal_id: str, payload: DealChangeIn, db: Session = Depends(get_d
 @router.post("/{deal_id}/cancel", response_model=DealOut)
 def cancel_deal(deal_id: str, payload: DealCancelIn, db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
     return service.cancel(db, farmer.id, deal_id, payload.reason)
+
+
+@router.post("/{deal_id}/extend", response_model=DealOut)
+def extend_deal(deal_id: str, payload: DealExtendIn, db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
+    return service.extend(db, farmer.id, deal_id, payload.days)
+
+
+# The customer's side — see app/deals/customer.py.
+customer_router = APIRouter(prefix="/deals", tags=["group deals"])
+
+
+@customer_router.get("", response_model=DealCardListOut)
+def open_deals(farmer_id: str | None = None, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return {"deals": customer_side.list_deals(db, customer, farmer_id)}
+
+
+@customer_router.get("/{deal_id}", response_model=CustomerDealOut)
+def one_deal(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.get_deal(db, customer, deal_id)
+
+
+@customer_router.post("/{deal_id}/quote", response_model=DealQuoteOut)
+def quote_deal(deal_id: str, payload: DealQuoteIn, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.quote(db, customer, deal_id, payload)
+
+
+@customer_router.post("/{deal_id}/join", response_model=DealJoinOut)
+def join_deal(deal_id: str, payload: DealJoinIn, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.join(db, customer, deal_id, payload)
+
+
+@customer_router.post("/{deal_id}/join/confirm", response_model=CustomerDealOut)
+def confirm_join(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.confirm_join(db, customer, deal_id)
+
+
+@customer_router.post("/{deal_id}/withdraw", response_model=CustomerDealOut)
+def withdraw(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.withdraw(db, customer, deal_id)
+
+
+@customer_router.post("/{deal_id}/regular-price", response_model=CustomerDealOut)
+def buy_regular(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return closing.buy_at_regular_price(db, customer, deal_id)

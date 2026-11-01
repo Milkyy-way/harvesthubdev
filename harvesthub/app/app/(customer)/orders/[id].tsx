@@ -197,6 +197,8 @@ export default function OrderDetailScreen() {
             orderId={order.id}
             storeOrder={storeOrder}
             paysAtPickup={order.payment?.payment_method === 'cash_on_pickup'}
+            paymentStatus={order.payment?.status}
+            paymentFailure={order.payment?.failure_reason}
             busy={busyStoreOrderId === storeOrder.id}
             onCancel={() => confirmCancelStore(storeOrder.id, storeOrder.farm_name)}
             onMarkReceived={() => confirmMarkReceived(storeOrder)}

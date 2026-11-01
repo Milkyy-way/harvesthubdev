@@ -10,6 +10,8 @@ type Props = {
   orderId: string;
   storeOrder: StoreOrder;
   paysAtPickup: boolean; // cash_on_pickup — the order's single payment covers every farm in it
+  paymentStatus?: string;
+  paymentFailure?: string | null;
   busy: boolean;
   onCancel: () => void;
   onMarkReceived: () => void;
@@ -40,6 +42,8 @@ export function OrderStoreSection({
   orderId,
   storeOrder,
   paysAtPickup,
+  paymentStatus,
+  paymentFailure,
   busy,
   onCancel,
   onMarkReceived,
@@ -85,8 +89,11 @@ export function OrderStoreSection({
             : STATUS_LABELS[storeOrder.status];
   // A pod order can't be cancelled once the farm's orders have closed.
   const podClosed = podCharge !== null && podCharge.status !== 'awaiting' && podCharge.status !== 'not_placed';
+  // Neither can a group deal's, once it exists: the deal has closed.
+  const isDealOrder = !!storeOrder.group_deal_id;
+  const dealCardFailed = isDealOrder && paymentStatus === 'charge_failed' && storeOrder.status === 'pending_payment';
   const canCancel =
-    !podClosed && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
+    !podClosed && !isDealOrder && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
   const canMarkReceived = storeOrder.status === 'ready_for_pickup';
 
   return (
@@ -116,6 +123,14 @@ export function OrderStoreSection({
               : `Delivery ${storeOrder.delivery?.window_label ?? ''} to ${addressLine}`}
         </Text>
       </View>
+
+      {dealCardFailed ? (
+        <PodChargeCard
+          orderId={orderId}
+          charge={{ status: 'failed', failure_reason: paymentFailure ?? null, charge_at: '', households_ordered: 0, households_total: 0, share_now: 0, full_fee: 0 }}
+          onChanged={onDeliveryUpdate}
+        />
+      ) : null}
 
       {podCharge && storeOrder.status === 'pending_payment' ? (
         <PodChargeCard orderId={orderId} charge={podCharge} onChanged={onDeliveryUpdate} />
@@ -172,6 +187,9 @@ export function OrderStoreSection({
       ) : null}
       {podCharge?.status === 'charged' && storeOrder.status === 'paid' ? (
         <Text style={styles.hint}>Orders have closed, so this order can&apos;t be cancelled now.</Text>
+      ) : null}
+      {isDealOrder && storeOrder.status !== 'cancelled' && storeOrder.status !== 'completed' ? (
+        <Text style={styles.hint}>A group deal order can&apos;t be cancelled once the deal has closed.</Text>
       ) : null}
       {preparing ? (
         <Text style={styles.hint}>The farm is packing your order — it&apos;ll show “Ready for pickup” here when it&apos;s ready.</Text>

@@ -53,6 +53,7 @@ _FARMER_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_fo
 # _CANCELLABLE_STORE_ORDER_STATUSES); they're told why.
 _ON_ITS_WAY = "This order is already on its way, so it can't be cancelled now."
 _POD_ORDERS_CLOSED = "Orders for this delivery have closed, so it can't be cancelled now."
+_DEAL_ORDER_LOCKED = "A group deal order can't be cancelled once the deal has closed. If the farm can't fill it, you'll be refunded in full."
 # A Neighborhood Pod order saves a card, and is charged at the farm's cutoff
 # (app/pods/charging.py).
 POD_ORDER_PURPOSE = "pod_order"
@@ -138,6 +139,7 @@ def build_order_out(db: Session, order_id) -> dict:
                 "total": float(so.total),
                 "refunded_amount": float(refunded or 0),
                 "status": so.status,
+                "group_deal_id": str(so.group_deal_id) if so.group_deal_id else None,
                 "cancelled_by": cancelled_by if so.status == "cancelled" else None,
                 "cancellation_reason": cancellation_reason if so.status == "cancelled" else None,
                 "delivery": delivery_service.progress_for(db, so),
@@ -165,7 +167,8 @@ def build_order_out(db: Session, order_id) -> dict:
             "payment_method": payment.payment_method,
             "status": payment.status,
             "failure_reason": payment.failure_reason,
-            "charged_at_cutoff": bool(payment.stripe_setup_intent_id),
+            # The amount can still fall for a pod order; a deal's can't.
+            "charged_at_cutoff": bool(payment.stripe_setup_intent_id) and not any(so.group_deal_id for so in store_orders),
         }
 
     return {
@@ -554,7 +557,7 @@ def _restore_stock_and_promo(db: Session, store_order: StoreOrder) -> None:
         if item.product_id:
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if product:
-                product.quantity_available += item.quantity
+                product.quantity_available += item.quantity if item.stock_units is None else item.stock_units
 
 
 def _sync_cash_payment_status(db: Session, order_id, payment: Payment | None) -> None:
@@ -626,6 +629,8 @@ def cancel_store_order(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY)
     if _pod_orders_closed(db, store_order, db.query(Payment).filter(Payment.order_id == order.id).first()):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
+    if store_order.group_deal_id and store_order.status != "cancelled":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
     if store_order.status not in _CANCELLABLE_STORE_ORDER_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -715,6 +720,8 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
     if any(_pod_orders_closed(db, so, payment) for so in store_orders):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
+    if any(so.group_deal_id for so in store_orders):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
     refundable = [so for so in store_orders if so.status in _REFUNDABLE_STORE_ORDER_STATUSES]
     pending = [so for so in store_orders if so.status == "pending_payment"]
 
