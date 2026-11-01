@@ -415,7 +415,7 @@ def delivery_options(db: Session, customer_id, farmer_ids: list[str]) -> list[di
                 "reason": reason,
                 "delivery_fee": _money(s.delivery_fee) if s else 0.0,
                 "address_line": _address_line(
-                    customer.address_street, customer.address_city, customer.address_state, customer.address_zip
+                    customer.street_line, customer.address_city, customer.address_state, customer.address_zip
                 )
                 if customer
                 else "",
@@ -502,7 +502,7 @@ def check_slot(db: Session, farmer_id: str, customer_id, starts_at: str | None, 
                 "label": window_label(a, b),
                 "delivery_fee": _money(s.delivery_fee),
                 "address_line": _address_line(
-                    customer.address_street, customer.address_city, customer.address_state, customer.address_zip
+                    customer.street_line, customer.address_city, customer.address_state, customer.address_zip
                 ),
             }
     return {"error": "That delivery time isn't available anymore. Pick another one.", "delivery_fee": _money(s.delivery_fee)}

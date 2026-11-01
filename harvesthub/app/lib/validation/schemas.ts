@@ -103,6 +103,7 @@ export const customerSignupSchema = withMatchingPasswords(
       addressCity: z.string().trim().min(1, 'City is required'),
       addressState: z.string().trim().min(1, 'State is required'),
       addressZip: zipSchema,
+      addressUnit: z.string().trim().max(40, 'Keep the apartment under 40 characters').optional(),
       dietaryPreferences: z.array(z.enum(valuesOf(DIETARY_PREFERENCE_OPTIONS))),
       produceInterests: z.array(z.enum(valuesOf(PRODUCE_INTEREST_OPTIONS))),
       referralSource: z.enum(valuesOf(REFERRAL_SOURCE_OPTIONS)).optional(),

@@ -12,6 +12,7 @@ class CustomerProfile(Base):
     address_city = Column(String, nullable=False)
     address_state = Column(String, nullable=False)
     address_zip = Column(String, nullable=False)
+    address_unit = Column(String, nullable=True)  # apartment, suite or unit (0036)
     latitude = Column(Float, nullable=True)     # new — added via migration below
     longitude = Column(Float, nullable=True)    # new
     geocoded_at = Column(TIMESTAMP, nullable=True)  # new
@@ -23,3 +24,8 @@ class CustomerProfile(Base):
     dietary_preferences = Column(ARRAY(String), nullable=True)
     produce_interests = Column(ARRAY(String), nullable=True)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def street_line(self) -> str:
+        """The street with the apartment: what a driver needs to find them."""
+        return f"{self.address_street}, {self.address_unit}" if self.address_unit else self.address_street

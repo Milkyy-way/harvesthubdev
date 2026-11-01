@@ -22,6 +22,7 @@ from app.jobs.router import router as jobs_router
 from app.delivery.router import customer_router as delivery_router
 from app.delivery.router import farmer_router as farmer_delivery_router
 from app.pods.router import router as pods_router
+from app.deals.router import router as deals_router
 
 # The interactive docs list every endpoint — handy in development, not
 # something to publish in production.
@@ -61,6 +62,7 @@ app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(delivery_router, prefix="/api/v1")
 app.include_router(farmer_delivery_router, prefix="/api/v1")
 app.include_router(pods_router, prefix="/api/v1")
+app.include_router(deals_router, prefix="/api/v1")
 app.include_router(legal_router)
 
 @app.get("/health")

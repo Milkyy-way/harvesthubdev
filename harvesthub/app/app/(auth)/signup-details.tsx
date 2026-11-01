@@ -112,6 +112,7 @@ export default function SignupDetails() {
             address_city: result.data.addressCity,
             address_state: result.data.addressState,
             address_zip: result.data.addressZip,
+            address_unit: result.data.addressUnit ?? null,
             dietary_preferences: result.data.dietaryPreferences,
             produce_interests: result.data.produceInterests,
             referral_source: result.data.referralSource ?? null,

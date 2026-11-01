@@ -52,7 +52,7 @@ export default function CartScreen() {
   // Which farms deliver to this customer, and when. Re-asked when the farms
   // in the cart change, or the saved address does (Edit Profile).
   const farmIdsKey = (cart?.farms ?? []).map((f) => f.farmer_id).join(',');
-  const addressKey = `${customerProfile?.address_street}|${customerProfile?.address_zip}`;
+  const addressKey = `${customerProfile?.address_street}|${customerProfile?.address_unit}|${customerProfile?.address_zip}`;
   useEffect(() => {
     if (!farmIdsKey) return;
     apiClient

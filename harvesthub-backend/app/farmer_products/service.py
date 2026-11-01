@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.categories.models import Category
 from app.products.models import Product
 from app.cart.models import CartItem
+from app.deals.service import has_open_deal
 from app.farmer_products.schemas import FarmerProductCreate, FarmerProductUpdate
 
 
@@ -124,6 +125,8 @@ def update_product(db: Session, farmer_id, product_id: str, payload: FarmerProdu
         product.image_url = data["image_url"]
     if data.get("is_active") is not None:
         if product.is_active and not data["is_active"]:
+            if has_open_deal(db, product.id):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This product has a group deal running. Cancel the deal first.")
             # A hidden product can't be bought — take it out of every
             # customer's cart now rather than leaving it to fail at checkout.
             db.query(CartItem).filter(CartItem.product_id == product.id).delete()

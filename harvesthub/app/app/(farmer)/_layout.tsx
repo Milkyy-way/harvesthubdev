@@ -2,7 +2,7 @@ import { Stack } from 'expo-router';
 
 // (tabs) is the farmer app; application is the signup application (and,
 // for a rejected farmer, the fix-and-resubmit form); product/[id] is the
-// product editor ('new' to add); earnings, deliveries (and a run, and
+// product editor ('new' to add); deals (group deals) open from Products; earnings, deliveries (and a run, and
 // delivery settings), farm-profile, documents and ratings open from
 // Home/Account, as do notifications, legal and delete-account. Which one a farmer may be on is decided
 // by lib/routeGuard.ts, not here.
@@ -12,6 +12,9 @@ export default function FarmerLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="application" />
       <Stack.Screen name="product/[id]" />
+      <Stack.Screen name="deals/index" />
+      <Stack.Screen name="deals/new" />
+      <Stack.Screen name="deals/[id]" />
       <Stack.Screen name="earnings" />
       <Stack.Screen name="deliveries" />
       <Stack.Screen name="delivery-run/[id]" />

@@ -6,6 +6,7 @@ class CustomerProfileOut(BaseModel):
     address_city: str
     address_state: str
     address_zip: str
+    address_unit: Optional[str] = None
     latitude: Optional[float]
     longitude: Optional[float]
     # 'exact' | 'interpolated' | 'approximate' | 'zip' | None (couldn't place)

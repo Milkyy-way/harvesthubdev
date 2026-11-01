@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { View, Text, FlatList, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -81,6 +81,18 @@ export default function FarmerProducts() {
               </Pressable>
             </HeroShell>
             {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Pressable
+              style={({ pressed }) => [styles.dealsLink, pressed && styles.pressed]}
+              onPress={() => router.push('/(farmer)/deals' as Href)}
+              accessibilityRole="button"
+            >
+              <MaterialIcons name="groups" size={22} color={colors.primary} />
+              <View style={styles.rowText}>
+                <Text style={styles.dealsTitle}>Group deals</Text>
+                <Text style={styles.dealsBody}>Offer a lower price if enough households join.</Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color={colors.primaryDark} />
+            </Pressable>
           </View>
         }
         ListEmptyComponent={
@@ -161,6 +173,18 @@ const styles = StyleSheet.create({
   addButtonText: { color: colors.primaryDark, fontWeight: '700', fontSize: 14 },
   error: { color: colors.danger, fontSize: 13, marginHorizontal: spacing.lg, marginTop: spacing.md },
   loading: { marginTop: spacing.xl },
+  dealsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.tint,
+  },
+  dealsTitle: { fontFamily: fonts.headlineBold, fontSize: 17, color: colors.primaryDark },
+  dealsBody: { fontSize: 12.5, color: colors.text, marginTop: 1 },
   empty: { minHeight: 320 },
   row: {
     flexDirection: 'row',

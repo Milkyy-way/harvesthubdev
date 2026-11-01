@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.customers import service as customers_service
+from app.deals import service as deals_service
 from app.delivery import service as delivery_service
 from app.farmers import service as farmers_service
 from app.notifications import jobs as notification_jobs
@@ -25,6 +26,8 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         **notification_jobs.run(db),
         # Neighborhood Pods: invites expiring, grace periods, departures.
         **pods_service.run_jobs(db),
+        # Group deals: opening to members, then everyone; reaching the deadline.
+        **deals_service.run_jobs(db),
         # Google's coordinates may only be kept 30 days (app/core/geocoding.py).
         "homes_regeocoded": customers_service.refresh_stale_locations(db),
         "farms_regeocoded": farmers_service.refresh_stale_locations(db),

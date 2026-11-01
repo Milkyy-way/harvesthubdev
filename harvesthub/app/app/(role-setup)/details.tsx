@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { colors, spacing, fonts } from '../../constants/theme';
 import { TextField } from '../../components/TextField';
 import { AddressSearchField } from '../../components/AddressSearchField';
+import { splitUnit } from '../../lib/addressSearch';
 import { TagSelector } from '../../components/TagSelector';
 import { DIETARY_PREFERENCE_OPTIONS, PRODUCE_INTEREST_OPTIONS } from '../../lib/validation/schemas';
 import type { DietaryPreference, ProduceInterest } from '../../types/database';
@@ -26,6 +27,7 @@ export default function RoleSetupDetails() {
   const [addressCity, setAddressCity] = useState('');
   const [addressState, setAddressState] = useState('');
   const [addressZip, setAddressZip] = useState('');
+  const [addressUnit, setAddressUnit] = useState('');
   const [dietaryPreferences, setDietaryPreferences] = useState<DietaryPreference[]>([]);
   const [produceInterests, setProduceInterests] = useState<ProduceInterest[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +70,14 @@ export default function RoleSetupDetails() {
       setError(rpcError.message);
       return;
     }
+    if (addressUnit.trim() && session) {
+      const { error: unitError } = await supabase
+        .from('customer_profiles')
+        .update({ address_unit: addressUnit.trim().slice(0, 40) })
+        .eq('id', session.user.id);
+      // Not worth stopping sign-up over: they can add it in Edit Profile.
+      if (unitError) console.warn('Could not save apartment:', unitError);
+    }
     // Deliberately NOT resetting loading on success — this screen doesn't
     // navigate itself, it waits for RootLayout's redirect effect to react
     // to the profile update below and move on. Re-enabling the button in
@@ -102,12 +112,15 @@ export default function RoleSetupDetails() {
           value={addressStreet}
           onChangeText={setAddressStreet}
           onSelectAddress={(a) => {
-            setAddressStreet(a.street);
+            const { street, unit } = splitUnit(a.street);
+            setAddressStreet(street);
+            setAddressUnit(unit);
             setAddressCity(a.city);
             setAddressState(a.state);
             setAddressZip(a.zip);
           }}
         />
+        <TextField placeholder="Apt, suite or unit (optional)" value={addressUnit} onChangeText={setAddressUnit} maxLength={40} />
         <TextField placeholder="City" value={addressCity} onChangeText={setAddressCity} />
         <View style={styles.row}>
           <TextField style={styles.flex1} placeholder="State" value={addressState} onChangeText={setAddressState} />

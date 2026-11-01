@@ -36,6 +36,13 @@ export function newSearchSession(): string {
   return token;
 }
 
+// A picked suggestion carries any apartment after a # ("10 Main St #4B", see
+// app/addresses/service.py). The customer forms keep it in its own box.
+export function splitUnit(street: string): { street: string; unit: string } {
+  const match = street.match(/^(.*\S)\s+(#\s*\S.*)$/);
+  return match ? { street: match[1], unit: match[2] } : { street, unit: '' };
+}
+
 export function isSearchUnavailable(err: unknown): boolean {
   return isAxiosError(err) && err.response?.status === 503;
 }

@@ -361,7 +361,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             pickup_address_city=group["address_city"],
             pickup_address_state=group["address_state"],
             pickup_address_zip=group["address_zip"],
-            delivery_address_street=delivery.address_street if delivery else None,
+            delivery_address_street=(delivery.address_street if group["pod_id"] else delivery.street_line) if delivery else None,
             delivery_address_city=delivery.address_city if delivery else None,
             delivery_address_state=delivery.address_state if delivery else None,
             delivery_address_zip=delivery.address_zip if delivery else None,

@@ -2,6 +2,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { TextField } from '../TextField';
 import { AddressSearchField } from '../AddressSearchField';
 import { TagSelector } from '../TagSelector';
+import { splitUnit } from '../../lib/addressSearch';
 import { colors, spacing } from '../../constants/theme';
 import {
   DIETARY_PREFERENCE_OPTIONS,
@@ -20,6 +21,7 @@ export interface CustomerFormValues {
   addressCity: string;
   addressState: string;
   addressZip: string;
+  addressUnit: string;
   dietaryPreferences: DietaryPreference[];
   produceInterests: ProduceInterest[];
   referralSource: ReferralSource[];
@@ -36,6 +38,7 @@ export const initialCustomerFormValues: CustomerFormValues = {
   addressCity: '',
   addressState: '',
   addressZip: '',
+  addressUnit: '',
   dietaryPreferences: [],
   produceInterests: [],
   referralSource: [],
@@ -95,10 +98,17 @@ export function CustomerFields({ value, onChange, errors }: Props) {
       <AddressSearchField
         value={value.addressStreet}
         onChangeText={(addressStreet) => onChange({ addressStreet })}
-        onSelectAddress={(a) =>
-          onChange({ addressStreet: a.street, addressCity: a.city, addressState: a.state, addressZip: a.zip })
-        }
+        onSelectAddress={(a) => {
+          const { street, unit } = splitUnit(a.street);
+          onChange({ addressStreet: street, addressUnit: unit, addressCity: a.city, addressState: a.state, addressZip: a.zip });
+        }}
         error={errors.addressStreet}
+      />
+      <TextField
+        placeholder="Apt, suite or unit (optional)"
+        value={value.addressUnit}
+        onChangeText={(addressUnit) => onChange({ addressUnit })}
+        error={errors.addressUnit}
       />
       <TextField
         placeholder="City"

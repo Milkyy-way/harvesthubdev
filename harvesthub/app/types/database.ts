@@ -24,6 +24,7 @@ export interface CustomerProfile {
   address_city: string;
   address_state: string;
   address_zip: string;
+  address_unit: string | null;
   latitude: number | null;
   longitude: number | null;
   dietary_preferences: DietaryPreference[];
@@ -42,6 +43,7 @@ export interface CustomerProfileGeo {
   address_city: string;
   address_state: string;
   address_zip: string;
+  address_unit: string | null;
   latitude: number | null;
   longitude: number | null;
   // How exact latitude/longitude are (harvesthub-backend/app/core/geocoding.py).

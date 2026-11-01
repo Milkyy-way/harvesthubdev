@@ -46,7 +46,10 @@ export default function CustomerAccount() {
   );
 
   const addressLine = customerProfile
-    ? [customerProfile.address_street, `${customerProfile.address_city}, ${customerProfile.address_state} ${customerProfile.address_zip}`]
+    ? [
+        [customerProfile.address_street, customerProfile.address_unit].filter(Boolean).join(', '),
+        `${customerProfile.address_city}, ${customerProfile.address_state} ${customerProfile.address_zip}`,
+      ]
     : [];
 
   return (

@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { TextField } from '../../components/TextField';
 import { AddressSearchField } from '../../components/AddressSearchField';
+import { splitUnit } from '../../lib/addressSearch';
 import { TagSelector } from '../../components/TagSelector';
 import { phoneSchema, zipSchema, flattenFieldErrors, DIETARY_PREFERENCE_OPTIONS, PRODUCE_INTEREST_OPTIONS } from '../../lib/validation/schemas';
 import type { DietaryPreference, ProduceInterest } from '../../types/database';
@@ -20,6 +21,7 @@ const editProfileSchema = z.object({
   addressCity: z.string().trim().min(1, 'City is required'),
   addressState: z.string().trim().min(1, 'State is required'),
   addressZip: zipSchema,
+  addressUnit: z.string().trim().max(40, 'Keep the apartment under 40 characters').optional(),
 });
 
 export default function EditProfileScreen() {
@@ -33,13 +35,14 @@ export default function EditProfileScreen() {
   const [addressCity, setAddressCity] = useState(customerProfile?.address_city ?? '');
   const [addressState, setAddressState] = useState(customerProfile?.address_state ?? '');
   const [addressZip, setAddressZip] = useState(customerProfile?.address_zip ?? '');
+  const [addressUnit, setAddressUnit] = useState(customerProfile?.address_unit ?? '');
   const [dietaryPreferences, setDietaryPreferences] = useState<DietaryPreference[]>(customerProfile?.dietary_preferences ?? []);
   const [produceInterests, setProduceInterests] = useState<ProduceInterest[]>(customerProfile?.produce_interests ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    const result = editProfileSchema.safeParse({ fullName, phone, addressStreet, addressCity, addressState, addressZip });
+    const result = editProfileSchema.safeParse({ fullName, phone, addressStreet, addressCity, addressState, addressZip, addressUnit });
     if (!result.success) {
       setErrors(flattenFieldErrors(result.error));
       return;
@@ -67,6 +70,7 @@ export default function EditProfileScreen() {
           address_city: addressCity.trim(),
           address_state: addressState.trim(),
           address_zip: addressZip.trim(),
+          address_unit: addressUnit.trim() || null,
           dietary_preferences: dietaryPreferences,
           produce_interests: produceInterests,
           // A changed address clears the stored map location by itself (a
@@ -113,13 +117,16 @@ export default function EditProfileScreen() {
           value={addressStreet}
           onChangeText={setAddressStreet}
           onSelectAddress={(a) => {
-            setAddressStreet(a.street);
+            const { street, unit } = splitUnit(a.street);
+            setAddressStreet(street);
+            setAddressUnit(unit);
             setAddressCity(a.city);
             setAddressState(a.state);
             setAddressZip(a.zip);
           }}
           error={errors.addressStreet}
         />
+        <TextField placeholder="Apt, suite or unit (optional)" value={addressUnit} onChangeText={setAddressUnit} error={errors.addressUnit} />
         <TextField placeholder="City" value={addressCity} onChangeText={setAddressCity} error={errors.addressCity} />
         <View style={styles.row}>
           <View style={styles.flex1}>
