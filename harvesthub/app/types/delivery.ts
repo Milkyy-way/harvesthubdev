@@ -99,6 +99,8 @@ export interface FarmDeliveryOption {
   address_line: string; // the customer's saved address
   slots: DeliverySlot[];
   pods: PodDeliveryOption[]; // active pods they can order to instead
+  offers_pod_delivery: boolean; // for the "start a pod" nudge
+  pod_needs_pass: boolean; // in a pod, but can't order to it without Harvest Pass
 }
 
 // Live tracking — GET /orders/{id}/store/{storeOrderId}/tracking, polled

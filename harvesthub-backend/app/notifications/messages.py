@@ -419,13 +419,23 @@ def pod_membership_lapsing(ctx: dict) -> Message:
     when = _date(ctx["leave_at"])
     return Message(
         title="You're leaving your pod soon",
-        body=f"Pods are for Harvest Pass members. Join by {when} to stay in {ctx['pod_name']}.",
+        body=f"Pods are for Harvest Pass members, so you can't order to {ctx['pod_name']} for now. Join by {when} to stay in it.",
         channels=(PUSH, EMAIL),
         url="/(customer)/harvest-pass",
         email_paragraphs=[
-            f"Neighborhood Pods are for Harvest Pass members, and your Harvest Pass has ended. You'll leave {ctx['pod_name']} on {when}.",
+            f"Neighborhood Pods are for Harvest Pass members, and your Harvest Pass has ended. You can't order to {ctx['pod_name']} for now, and you'll leave it on {when}.",
             "Join Harvest Pass in the app (Account → Harvest Pass) before then to stay.",
         ],
+    )
+
+
+def pod_promo(ctx: dict) -> Message:
+    """ctx: delivery_fee. Sent once per customer."""
+    return Message(
+        title="Split your delivery fee with neighbors",
+        body=f"You paid {_money(ctx['delivery_fee'])} for delivery. In a Neighborhood Pod, you and your neighbors split the fee.",
+        channels=(PUSH,),
+        url="/(customer)/pods",
     )
 
 
@@ -587,6 +597,7 @@ BUILDERS = {
     "pod_member_leaving": pod_member_leaving,
     "pod_membership_lapsing": pod_membership_lapsing,
     "pod_removed": pod_removed,
+    "pod_promo": pod_promo,
     "pod_new_host": pod_new_host,
     "pod_drop_changed": pod_drop_changed,
     "pod_drop_moved": pod_drop_moved,

@@ -20,18 +20,36 @@ export default function PodInviteScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Also on coming back from Harvest Pass, which may have changed the answer.
-  useFocusEffect(
-    useCallback(() => {
+  const load = useCallback(
+    () =>
       apiClient.get<InvitePreview>(`/pods/invites/${code}`).then(
         (res) => {
           setInvite(res.data);
           setError(null);
         },
         (err) => setError(apiErrorMessage(err, "Couldn't open this invite.")),
-      );
-    }, [code])
+      ),
+    [code]
   );
+
+  // Also on coming back from Harvest Pass, which may have changed the answer.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  const startFree = async () => {
+    setBusy(true);
+    try {
+      await apiClient.post('/membership/start-free');
+      await load();
+    } catch (err) {
+      Alert.alert("Couldn't start your free month", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const accept = async () => {
     setBusy(true);
@@ -133,12 +151,20 @@ export default function PodInviteScreen() {
                 <View style={styles.notice}>
                   <MaterialIcons name="workspace-premium" size={18} color={colors.primary} />
                   <Text style={styles.noticeText}>
-                    Pods are for Harvest Pass members. Join to accept this invite, then come back here.
+                    {invite.free_month_available
+                      ? 'Pods are for Harvest Pass members. Start your free month to join. No card needed.'
+                      : 'Pods are for Harvest Pass members. Join to accept this invite, then come back here.'}
                   </Text>
                 </View>
-                <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/harvest-pass')}>
-                  <Text style={styles.primaryButtonText}>See Harvest Pass</Text>
-                </Pressable>
+                {invite.free_month_available ? (
+                  <Pressable style={[styles.primaryButton, busy && styles.disabled]} onPress={startFree} disabled={busy}>
+                    {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonText}>Start free month</Text>}
+                  </Pressable>
+                ) : (
+                  <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/harvest-pass')}>
+                    <Text style={styles.primaryButtonText}>See Harvest Pass</Text>
+                  </Pressable>
+                )}
               </>
             ) : null}
 

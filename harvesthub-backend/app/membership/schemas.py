@@ -32,9 +32,10 @@ class MembershipOut(BaseModel):
 class MembershipOverviewOut(BaseModel):
     monthly_price: float
     plans: list[PlanOptionOut]
-    free_days: int  # how long every new customer's free period lasts
+    free_days: int  # how long the free period lasts
     free_period_ends_at: Optional[str]
     free_period_active: bool
+    free_period_available: bool  # never used: they can tap Start free month
     free_service_fee_min_subtotal: float
     is_member: bool  # has the benefits right now — paid, or the free period
     membership: Optional[MembershipOut]

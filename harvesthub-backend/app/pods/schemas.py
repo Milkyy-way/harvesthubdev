@@ -56,6 +56,7 @@ class PodMemberOut(BaseModel):
     is_me: bool
     leaving: bool
     needs_reapproval: bool
+    can_order: bool  # false: no Harvest Pass. The rest of the pod can see this.
 
 
 class PodInviteOut(BaseModel):
@@ -65,6 +66,14 @@ class PodInviteOut(BaseModel):
     status: InviteStatus
     expires_at: str
     created_at: str
+
+
+class PodNextOrdersOut(BaseModel):
+    farm_name: str
+    ordered: int  # members who've ordered
+    total: int  # members in the pod
+    closes_at: str  # the farm's cutoff
+    share_now: float
 
 
 class PodSummaryOut(BaseModel):
@@ -77,6 +86,8 @@ class PodSummaryOut(BaseModel):
     member_count: int
     needs_reapproval: bool
     needs_drop_point: bool
+    needs_pass: bool  # I can't order to it without Harvest Pass
+    next_orders: Optional[PodNextOrdersOut] = None  # the soonest orders waiting to close
 
 
 class PodOut(PodSummaryOut):
@@ -139,3 +150,4 @@ class InvitePreviewOut(BaseModel):
     # Why not, for the customer — unless all that's missing is Harvest Pass.
     blocker: Optional[str]
     needs_harvest_pass: bool
+    free_month_available: bool  # they can start it right here, with no card

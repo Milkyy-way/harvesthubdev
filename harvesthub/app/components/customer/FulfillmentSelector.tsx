@@ -1,5 +1,5 @@
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../constants/theme';
 import type { FulfillmentMethod } from '../../types/checkout';
@@ -124,6 +124,19 @@ export function FulfillmentSelector({
               </Pressable>
             </View>
           )}
+          {!selectedPod && delivery.pod_needs_pass ? (
+            <Pressable style={styles.nudge} onPress={() => router.push('/(customer)/harvest-pass')}>
+              <MaterialIcons name="groups" size={16} color={colors.primaryDark} />
+              <Text style={styles.nudgeText}>Join Harvest Pass to order to your pod and split this fee.</Text>
+              <MaterialIcons name="chevron-right" size={18} color={colors.primaryDark} />
+            </Pressable>
+          ) : !selectedPod && pods.length === 0 && delivery.offers_pod_delivery ? (
+            <Pressable style={styles.nudge} onPress={() => router.push('/(customer)/pods' as Href)}>
+              <MaterialIcons name="groups" size={16} color={colors.primaryDark} />
+              <Text style={styles.nudgeText}>Split this fee with neighbors. Start a pod.</Text>
+              <MaterialIcons name="chevron-right" size={18} color={colors.primaryDark} />
+            </Pressable>
+          ) : null}
           <Text style={styles.slotLabel}>Choose a delivery time</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.slots}>
             {slots.map((slot) => {
@@ -191,6 +204,16 @@ function Destination({
 
 const styles = StyleSheet.create({
   container: { marginTop: spacing.sm },
+  nudge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    padding: spacing.sm + 2,
+    backgroundColor: colors.tint,
+    borderRadius: radius.md,
+  },
+  nudgeText: { flex: 1, fontSize: 12.5, fontWeight: '600', color: colors.primaryDark },
   destinations: { gap: spacing.xs, marginTop: spacing.sm },
   destination: {
     flexDirection: 'row',

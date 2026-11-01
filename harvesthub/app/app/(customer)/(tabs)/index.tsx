@@ -10,6 +10,8 @@ import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { Header } from '../../../components/customer/Header';
 import { SavingsTicker } from '../../../components/customer/SavingsTicker';
 import { HarvestPassBanner } from '../../../components/customer/HarvestPassBanner';
+import { HarvestPassWelcome } from '../../../components/customer/HarvestPassWelcome';
+import { PodsHomeCard } from '../../../components/customer/PodsHomeCard';
 import { FarmerSpotlightRail } from '../../../components/customer/FarmerSpotlightRail';
 import { HarvestPicksRail } from '../../../components/customer/HarvestPicksRail';
 import { CategoryRail } from '../../../components/customer/CategoryRail';
@@ -24,6 +26,7 @@ import type {
 } from '../../../types/database';
 import type { DashboardSummary } from '../../../types/dashboard';
 import type { MembershipOverview } from '../../../types/membership';
+import type { PodSummary } from '../../../types/pods';
 
 const PAGE_SIZE = 20;
 
@@ -48,6 +51,7 @@ export default function CustomerHome() {
   const [harvestPicks, setHarvestPicks] = useState<HarvestPicksResponse['items']>([]);
   const [savingsAmount, setSavingsAmount] = useState<number | null>(null);
   const [membership, setMembership] = useState<MembershipOverview | null>(null);
+  const [pods, setPods] = useState<PodSummary[] | null>(null);
 
   const avatarInitial = (profile?.full_name?.trim()?.[0] ?? 'H').toUpperCase();
 
@@ -93,6 +97,10 @@ export default function CustomerHome() {
       apiClient.get<MembershipOverview>('/membership').then(
         (res) => setMembership(res.data),
         (err) => console.warn('Could not load Harvest Pass status:', err)
+      );
+      apiClient.get<{ pods: PodSummary[] }>('/pods').then(
+        (res) => setPods(res.data.pods),
+        (err) => console.warn('Could not load pods:', err)
       );
     }, [])
   );
@@ -174,6 +182,7 @@ export default function CustomerHome() {
 
   return (
     <View style={styles.container}>
+      <HarvestPassWelcome overview={membership} onChanged={setMembership} />
       <StatusBar style="dark" />
       <Header
         addressCity={city ?? null}
@@ -208,12 +217,8 @@ export default function CustomerHome() {
             {!filtering ? (
               <>
                 {savingsAmount != null && savingsAmount > 0 ? <SavingsTicker amount={savingsAmount} /> : null}
-                {membership && !membership.membership ? (
-                  <HarvestPassBanner
-                    freeUntil={membership.free_period_active ? membership.free_period_ends_at : null}
-                    minSubtotal={membership.free_service_fee_min_subtotal}
-                  />
-                ) : null}
+                {membership ? <HarvestPassBanner overview={membership} /> : null}
+                <PodsHomeCard pods={pods} />
                 <FarmerSpotlightRail items={spotlight} onPressFarmer={openFarm} />
                 <HarvestPicksRail items={harvestPicks} />
               </>

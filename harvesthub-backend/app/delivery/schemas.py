@@ -133,6 +133,8 @@ class FarmDeliveryOptionOut(BaseModel):
     address_line: str  # deliveries go to the customer's saved address
     slots: list[DeliverySlotOut]
     pods: list[PodDeliveryOptionOut] = []  # active pods they can order to instead
+    offers_pod_delivery: bool = False  # for the "start a pod" nudge
+    pod_needs_pass: bool = False  # in a pod, but can't order to it without Harvest Pass
 
 
 class DeliveryOptionsOut(BaseModel):

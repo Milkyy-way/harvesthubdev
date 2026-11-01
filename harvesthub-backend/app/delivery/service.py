@@ -41,6 +41,7 @@ from app.core.models import Profile
 from app.customers.models import CustomerProfile
 from app.delivery.models import DeliveryRun, DeliveryStop, FarmDeliverySettings, FarmDeliveryWindow
 from app.farmers.models import FarmerProfile
+from app.membership.service import has_member_benefits
 from app.notifications.service import Notice, notify_many
 from app.orders.models import Order, StoreOrder, StoreOrderItem
 from app.payments.models import AWAITING_CUTOFF, CHARGE_FAILED, CHARGING, POD_PLACED_STATUSES, Payment
@@ -320,8 +321,11 @@ def pod_farms_near(db: Session, latitude: float, longitude: float, weekday: int 
 
 
 def _pods_of(db: Session, customer_id) -> list[tuple[Pod, PodMember]]:
-    """Pods this customer can order to right now: active, and with the
-    current drop point approved. A paused pod can't take orders."""
+    """Pods this customer can order to right now: active, with the current
+    drop point approved, and only with Harvest Pass (user, 2026-10-31). A
+    paused pod can't take orders."""
+    if not has_member_benefits(db, customer_id):
+        return []
     return (
         db.query(Pod, PodMember)
         .join(PodMember, PodMember.pod_id == Pod.id)
@@ -382,6 +386,10 @@ def _pod_options(db: Session, customer_id, farmer: FarmerProfile | None, s: Farm
     return out
 
 
+def _in_a_pod(db: Session, customer_id) -> bool:
+    return db.query(PodMember.id).filter(PodMember.customer_id == customer_id, PodMember.status == "active").first() is not None
+
+
 def delivery_options(db: Session, customer_id, farmer_ids: list[str]) -> list[dict]:
     """For the cart: per farm, can this customer get delivery, for how much,
     and in which windows — to their home, and to any pod they're in."""
@@ -415,6 +423,9 @@ def delivery_options(db: Session, customer_id, farmer_ids: list[str]) -> list[di
                     {"starts_at": a.isoformat(), "ends_at": b.isoformat(), "label": window_label(a, b)} for a, b in slots[:12]
                 ],
                 "pods": _pod_options(db, customer_id, farmer, s, now),
+                "offers_pod_delivery": bool(s and s.offers_delivery and s.offers_pod_delivery),
+                # In a pod, but can't order to it without Harvest Pass.
+                "pod_needs_pass": not has_member_benefits(db, customer_id) and _in_a_pod(db, customer_id),
             }
         )
     return out
@@ -427,6 +438,8 @@ def _check_pod_slot(db: Session, farmer: FarmerProfile | None, s: FarmDeliverySe
         return {"error": "You can't order to that pod."}
     match = next(((pod, member) for pod, member in _pods_of(db, customer_id) if pod.id == pid), None)
     if match is None:
+        if not has_member_benefits(db, customer_id):
+            return {"error": "Join Harvest Pass to order to your pod."}
         return {"error": "Your pod can't take orders right now."}
     pod, member = match
     if not _reaches(farmer, s, pod.latitude, pod.longitude):
@@ -876,6 +889,13 @@ def mark_delivered(db: Session, farmer_id, run_id: str, stop_id: str, photo_path
         )
         for so in delivered
     ]
+    # One time only: after a home delivery, from a farm that delivers to pods.
+    settings = db.get(FarmDeliverySettings, farmer_id)
+    if stop.kind == "home" and settings and settings.offers_pod_delivery:
+        for so in delivered:
+            customer_id = _customer_of(db, so)
+            if not _in_a_pod(db, customer_id):
+                notices.append(Notice(customer_id, "pod_promo", {"delivery_fee": _money(so.delivery_fee)}, f"pod_promo:{customer_id}"))
     notify_many(db, notices + _next_stop_notices(db, run))
     return get_run(db, farmer_id, run_id)
 

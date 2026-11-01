@@ -3,18 +3,23 @@ import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { formatLongDate } from '../../lib/harvestPass';
+import type { MembershipOverview } from '../../types/membership';
 
-type Props = {
-  freeUntil: string | null; // still in their free month: when it ends
-  minSubtotal: number;
-};
-
-// Home's Harvest Pass strip for customers without a paid plan — during their
-// free month it says how long it lasts, after that it invites them to join.
-// Same warm tinted strip as SavingsTicker, so it reads as part of the page,
-// not an ad.
-export function HarvestPassBanner({ freeUntil, minSubtotal }: Props) {
+// Home's Harvest Pass strip, for every customer: what they have, or what they
+// could. Same warm tinted strip as SavingsTicker, so it reads as part of the
+// page, not an ad.
+export function HarvestPassBanner({ overview }: { overview: MembershipOverview }) {
   const router = useRouter();
+  const min = overview.free_service_fee_min_subtotal.toFixed(0);
+  const access = `no service fee on $${min}+ · Neighborhood Pods`;
+  const label = overview.free_period_available
+    ? `${overview.free_days} days free, no card needed · ${access}`
+    : overview.membership?.has_benefits
+      ? `Active · ${access}`
+      : overview.free_period_active && overview.free_period_ends_at
+        ? `Free until ${formatLongDate(overview.free_period_ends_at)} · ${access}`
+        : `Join for ${access}`;
+  const action = overview.free_period_available ? 'Start' : overview.is_member ? 'Details' : 'Join';
 
   return (
     <Pressable
@@ -24,14 +29,10 @@ export function HarvestPassBanner({ freeUntil, minSubtotal }: Props) {
       <Text style={styles.emoji}>🌾</Text>
       <View style={styles.textWrap}>
         <Text style={styles.title}>Harvest Pass</Text>
-        <Text style={styles.label}>
-          {freeUntil
-            ? `Free until ${formatLongDate(freeUntil)} · no service fee on $${minSubtotal.toFixed(0)}+`
-            : `No service fee on orders of $${minSubtotal.toFixed(0)}+`}
-        </Text>
+        <Text style={styles.label}>{label}</Text>
       </View>
       <View style={styles.cta}>
-        <Text style={styles.ctaText}>{freeUntil ? 'Details' : 'Join'}</Text>
+        <Text style={styles.ctaText}>{action}</Text>
         <MaterialIcons name="chevron-right" size={16} color={colors.primaryDark} />
       </View>
     </Pressable>

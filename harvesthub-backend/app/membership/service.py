@@ -1,9 +1,11 @@
 """Harvest Pass — the customer membership (see 0028_harvest_pass.sql and
 0029_harvest_pass_free_period.sql).
 
-Every new customer gets Harvest Pass free for HARVEST_PASS_FREE_DAYS, with no
-card: a harvest_pass_free_periods row, created the first time their account
-reaches the API. After that they pay to keep it.
+Every new customer can have Harvest Pass free for HARVEST_PASS_FREE_DAYS, with
+no card: a harvest_pass_free_periods row, created when they tap Start free month
+(decided with the user 2026-10-31), so the days don't run before they know about
+it. After that they pay to keep it. Joining a plan without having used it starts
+it too.
 
 Paying, card first: /prepare saves a card with a Stripe SetupIntent (the app
 shows the PaymentSheet), then /subscribe starts the subscription on that
@@ -71,10 +73,25 @@ def live_membership(db: Session, customer_id) -> Membership | None:
     )
 
 
+def free_month_available(db: Session, customer_id) -> bool:
+    """Never used it, and not already paying."""
+    return db.get(FreePeriod, customer_id) is None and live_membership(db, customer_id) is None
+
+
+def start_free_month(db: Session, customer_id) -> dict:
+    """Start free month: once per customer. A repeated tap is fine."""
+    period = db.get(FreePeriod, customer_id)
+    if period is not None and not _free_period_active(period):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You've already used your free month.")
+    ensure_free_period(db, customer_id)
+    return get_overview(db, customer_id)
+
+
 def ensure_free_period(db: Session, customer_id) -> FreePeriod:
     """The customer's free Harvest Pass period, started now if they don't
     have one yet. Commits only when it creates the row (once per customer);
-    a concurrent request creating it too is harmless (ON CONFLICT)."""
+    a concurrent request creating it too is harmless (ON CONFLICT). Only for
+    a customer choosing it: reading their status must not start the clock."""
     row = db.get(FreePeriod, customer_id)
     if row:
         return row
@@ -100,7 +117,7 @@ def has_member_benefits(db: Session, customer_id) -> bool:
         .first()
         is not None
     )
-    return paid or _free_period_active(ensure_free_period(db, customer_id))
+    return paid or _free_period_active(db.get(FreePeriod, customer_id))
 
 
 def total_member_savings(db: Session, customer_id) -> float:
@@ -258,12 +275,13 @@ def handle_invoice_event(db: Session, invoice: dict, paid: bool) -> None:
 # --- Joining -------------------------------------------------------------------------
 
 
-def _trial_end(db: Session, customer_id) -> datetime | None:
-    """Joining during the free period: nothing is charged until it ends."""
-    period = ensure_free_period(db, customer_id)
-    if period and period.ends_at - datetime.now(timezone.utc) >= _MIN_TRIAL_LEFT:
-        return period.ends_at
-    return None
+def _trial_end(db: Session, customer_id, starting: bool) -> datetime | None:
+    """Joining during the free period, or with it unused: nothing is charged
+    until it ends. Only actually joining (starting) starts an unused one."""
+    now = datetime.now(timezone.utc)
+    period = ensure_free_period(db, customer_id) if starting else db.get(FreePeriod, customer_id)
+    ends_at = period.ends_at if period else now + timedelta(days=HARVEST_PASS_FREE_DAYS)
+    return ends_at if ends_at - now >= _MIN_TRIAL_LEFT else None
 
 
 def _join_terms(plan: str, trial_end: datetime | None) -> dict:
@@ -285,7 +303,7 @@ def prepare_join(db: Session, customer_id, email: str | None, plan: str) -> dict
     _require_plan(plan)
     if live_membership(db, customer_id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already have Harvest Pass.")
-    trial_end = _trial_end(db, customer_id)
+    trial_end = _trial_end(db, customer_id, starting=False)
 
     stripe_customer_id = get_or_create_stripe_customer(db, customer_id, email)
     try:
@@ -327,7 +345,7 @@ def subscribe(db: Session, customer_id, plan: str, setup_intent_id: str) -> dict
 
     intent = _confirmed_setup_intent(db, customer_id, setup_intent_id, _SETUP_PURPOSE_JOIN)
     payment_method = intent["payment_method"]
-    trial_end = _trial_end(db, customer_id)
+    trial_end = _trial_end(db, customer_id, starting=True)
     months, _, billed = harvest_pass_plan_price(plan)
 
     try:
@@ -495,7 +513,7 @@ def _membership_out(membership: Membership) -> dict:
 
 
 def get_overview(db: Session, customer_id) -> dict:
-    period = ensure_free_period(db, customer_id)
+    period = db.get(FreePeriod, customer_id)
     free_active = _free_period_active(period)
     membership = live_membership(db, customer_id)
     paid_benefits = membership is not None and membership.status in BENEFIT_STATUSES
@@ -503,8 +521,9 @@ def get_overview(db: Session, customer_id) -> dict:
         "monthly_price": HARVEST_PASS_MONTHLY_PRICE,
         "plans": plan_options(),
         "free_days": HARVEST_PASS_FREE_DAYS,
-        "free_period_ends_at": _iso(period.ends_at),
+        "free_period_ends_at": _iso(period.ends_at) if period else None,
         "free_period_active": free_active,
+        "free_period_available": period is None and membership is None,
         "free_service_fee_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
         # Has the benefits right now — paid, or the free period.
         "is_member": paid_benefits or free_active,

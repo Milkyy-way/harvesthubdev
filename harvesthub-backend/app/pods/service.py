@@ -42,10 +42,11 @@ from app.core.models import Profile
 from app.customers.models import CustomerProfile
 from app.delivery import service as delivery_service
 from app.delivery.service import KM_PER_MILE
-from app.membership.service import has_member_benefits
+from app.delivery.models import FarmDeliverySettings
+from app.membership.service import free_month_available, has_member_benefits
 from app.notifications.service import Notice, notify_many
 from app.orders.models import Order, StoreOrder
-from app.payments.models import POD_PLACED_STATUSES, Payment
+from app.payments.models import AWAITING_CUTOFF, POD_PLACED_STATUSES, Payment
 from app.pods import charging
 from app.pods.models import Pod, PodInvite, PodMember
 from app.pods.schemas import DropPointIn
@@ -526,6 +527,35 @@ def create_pod(db: Session, customer: CustomerProfile, payload) -> dict:
 # --- Reading ------------------------------------------------------------------------------
 
 
+def _next_orders(db: Session, pod: Pod, members: int) -> dict | None:
+    """The soonest farm and window with orders waiting to close: how the split stands."""
+    rows = (
+        db.query(StoreOrder, Order.customer_id)
+        .join(Order, Order.id == StoreOrder.order_id)
+        .join(Payment, Payment.order_id == Order.id)
+        .filter(StoreOrder.pod_id == pod.id, Payment.status == AWAITING_CUTOFF, StoreOrder.status == "pending_payment")
+        .order_by(StoreOrder.delivery_window_starts_at)
+        .all()
+    )
+    if not rows:
+        return None
+    first = rows[0][0]
+    ordered = {
+        customer_id
+        for so, customer_id in rows
+        if so.farmer_id == first.farmer_id and so.delivery_window_starts_at == first.delivery_window_starts_at
+    }
+    s = db.get(FarmDeliverySettings, first.farmer_id)
+    closes_at = first.delivery_window_starts_at - timedelta(hours=s.cutoff_hours if s else 0)
+    return {
+        "farm_name": first.farm_name,
+        "ordered": len(ordered),
+        "total": members,
+        "closes_at": closes_at.isoformat(),
+        "share_now": delivery_service.pod_share(first.pod_full_fee, len(ordered)),
+    }
+
+
 def _summary(db: Session, pod: Pod, member: PodMember) -> dict:
     count = db.query(func.count(PodMember.id)).filter(PodMember.pod_id == pod.id, PodMember.status == "active").scalar()
     return {
@@ -538,6 +568,8 @@ def _summary(db: Session, pod: Pod, member: PodMember) -> dict:
         "member_count": count,
         "needs_reapproval": member.approved_drop_version < pod.drop_version and pod.latitude is not None,
         "needs_drop_point": pod.latitude is None,
+        "needs_pass": not has_member_benefits(db, member.customer_id),
+        "next_orders": _next_orders(db, pod, count),
     }
 
 
@@ -600,6 +632,7 @@ def get_pod(db: Session, customer_id, pod_id: str) -> dict:
                 "is_me": m.customer_id == customer_id,
                 "leaving": m.leave_at is not None,
                 "needs_reapproval": m.approved_drop_version < pod.drop_version,
+                "can_order": has_member_benefits(db, m.customer_id),
             }
             for m in members
         ],
@@ -768,6 +801,7 @@ def preview_invite(db: Session, customer: CustomerProfile, code: str) -> dict:
         "can_accept": problem is None and not needs_pass,
         "blocker": problem,
         "needs_harvest_pass": needs_pass and problem is None,
+        "free_month_available": free_month_available(db, customer.id),
     }
 
 

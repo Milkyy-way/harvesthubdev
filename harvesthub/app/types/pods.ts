@@ -36,6 +36,7 @@ export interface PodMember {
   is_me: boolean;
   leaving: boolean;
   needs_reapproval: boolean;
+  can_order: boolean; // false: no Harvest Pass
 }
 
 export interface PodInvite {
@@ -45,6 +46,14 @@ export interface PodInvite {
   status: InviteStatus;
   expires_at: string;
   created_at: string;
+}
+
+export interface PodNextOrders {
+  farm_name: string;
+  ordered: number;
+  total: number;
+  closes_at: string;
+  share_now: number;
 }
 
 export interface PodSummary {
@@ -57,6 +66,8 @@ export interface PodSummary {
   member_count: number;
   needs_reapproval: boolean;
   needs_drop_point: boolean;
+  needs_pass: boolean; // I can't order to it without Harvest Pass
+  next_orders: PodNextOrders | null;
 }
 
 export interface Pod extends PodSummary {
@@ -94,6 +105,7 @@ export interface InvitePreview {
   can_accept: boolean;
   blocker: string | null;
   needs_harvest_pass: boolean;
+  free_month_available: boolean;
 }
 
 export const POD_STATUS_LABELS: Record<PodStatus, string> = {

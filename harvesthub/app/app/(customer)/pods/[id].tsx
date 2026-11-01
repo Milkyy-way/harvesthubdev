@@ -201,16 +201,19 @@ export default function PodDetailScreen() {
                 }${pod.grace_ends_at ? ` by ${formatLongDate(pod.grace_ends_at)}, or it ends.` : '.'}`}
               />
             ) : null}
-            {pod.my_leave_at ? (
-              <Banner
-                icon="logout"
-                warning
-                text={
-                  pod.my_leave_reason === 'lapsed'
-                    ? `You leave this pod on ${formatLongDate(pod.my_leave_at)} unless you join Harvest Pass.`
-                    : 'You are leaving this pod once your order has been delivered.'
-                }
-              />
+            {pod.my_leave_at && pod.my_leave_reason !== 'lapsed' ? (
+              <Banner icon="logout" warning text="You are leaving this pod once your order has been delivered." />
+            ) : null}
+            {pod.needs_pass ? (
+              <View style={styles.passWarning}>
+                <Text style={styles.bannerText}>
+                  Your Harvest Pass has ended, so you can&apos;t order to this pod.
+                  {pod.my_leave_at ? ` You leave it on ${formatLongDate(pod.my_leave_at)} unless you join.` : ''}
+                </Text>
+                <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/harvest-pass')}>
+                  <Text style={styles.primaryButtonText}>Join Harvest Pass</Text>
+                </Pressable>
+              </View>
             ) : null}
 
             {pod.drop_locked_date ? (
@@ -299,7 +302,12 @@ export default function PodDetailScreen() {
                         {member.is_me ? ' (you)' : ''}
                       </Text>
                       <Text style={styles.rowText}>
-                        {[member.is_host ? 'Host' : null, member.leaving ? 'Leaving' : null, member.needs_reapproval ? 'Yet to approve the drop point' : null]
+                        {[
+                          member.is_host ? 'Host' : null,
+                          !member.can_order ? 'No Harvest Pass, can\'t order' : null,
+                          member.leaving ? 'Leaving' : null,
+                          member.needs_reapproval ? 'Yet to approve the drop point' : null,
+                        ]
                           .filter(Boolean)
                           .join(' · ') || 'Member'}
                       </Text>
@@ -419,6 +427,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   bannerWarning: { backgroundColor: '#F6E7E5' },
+  passWarning: { backgroundColor: '#F6E7E5', borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
   bannerText: { flex: 1, fontSize: 13.5, lineHeight: 19, color: colors.text },
   approve: { backgroundColor: colors.tint, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
   approveTitle: { fontSize: 15, fontWeight: '700', color: colors.text },

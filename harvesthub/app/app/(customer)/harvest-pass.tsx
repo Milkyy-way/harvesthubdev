@@ -33,8 +33,8 @@ import type {
   PrepareJoinResponse,
 } from '../../types/membership';
 
-// Harvest Pass — every new customer gets it free for their first month (no
-// card); then they join (plans) or, as members, manage it (status, savings,
+// Harvest Pass — a customer can start it free for a month (no card) when they
+// choose; then they join (plans) or, as members, manage it (status, savings,
 // next charge, card, cancel/resume). Joining saves a card first
 // (PaymentSheet, setup mode), then the backend starts the subscription —
 // nothing is charged until the free month is over. See
@@ -125,6 +125,17 @@ function JoinView({
 
   const selected = overview.plans.find((p) => p.plan === plan) ?? overview.plans[0];
   const minSubtotal = `$${overview.free_service_fee_min_subtotal.toFixed(0)}`;
+  const [startingFree, setStartingFree] = useState(false);
+  const startFree = async () => {
+    setStartingFree(true);
+    try {
+      onJoined((await apiClient.post<MembershipOverview>('/membership/start-free')).data);
+    } catch (err) {
+      Alert.alert("Couldn't start your free month", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setStartingFree(false);
+    }
+  };
   // Still in the free month: joining now charges nothing until it ends.
   const freeUntil = overview.free_period_active ? overview.free_period_ends_at : null;
   const freeEnded = !overview.free_period_active ? overview.free_period_ends_at : null;
@@ -157,6 +168,24 @@ function JoinView({
     }
   };
 
+  // Never used: the free month comes first, and needs no card or plan.
+  if (overview.free_period_available) {
+    return (
+      <View>
+        <Text style={styles.sectionTitle}>What you get</Text>
+        <Benefit icon="money-off" title={`No service fee on orders of ${minSubtotal}+`} body="Saved automatically at checkout, on every farm in your order." />
+        <Benefit icon="groups" title="Neighborhood Pods" body="Share a drop point with neighbors and split the delivery fee. Members only." />
+        <Benefit icon="savings" title="See what you save" body="Your Harvest Pass savings add up in the app." />
+        <Pressable style={[styles.primaryButton, startingFree && styles.buttonDisabled]} onPress={startFree} disabled={startingFree}>
+          {startingFree ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.primaryButtonText}>Start free month</Text>}
+        </Pressable>
+        <Text style={styles.finePrint}>
+          No card needed. {overview.free_days} days free from when you tap. Nothing is charged, and it doesn&apos;t renew by itself.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View>
       {freeUntil ? (
@@ -182,6 +211,7 @@ function JoinView({
         title={`No service fee on orders of ${minSubtotal}+`}
         body="Saved automatically at checkout, on every farm in your order."
       />
+      <Benefit icon="groups" title="Neighborhood Pods" body="Share a drop point with neighbors and split the delivery fee. Members only." />
       <Benefit icon="savings" title="See what you save" body="Your Harvest Pass savings add up in the app." />
       <Benefit icon="auto-awesome" title="More member perks on the way" body="New benefits are added as they launch." />
 

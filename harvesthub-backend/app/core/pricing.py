@@ -27,10 +27,10 @@ HARVEST_PASS_PLANS = {
     "3_months": (3, 0.10),
     "6_months": (6, 0.15),
 }
-# Every new customer gets Harvest Pass free for this many days, no card
+# Every new customer can have Harvest Pass free for this many days, no card
 # needed; after that they pay to keep it (decided with the user 2026-10-19 —
-# the same for everyone, and no referral rewards). It starts the first time
-# their account talks to the API (in practice, right after sign-up).
+# the same for everyone, and no referral rewards). It starts when they tap
+# Start free month (user, 2026-10-31).
 HARVEST_PASS_FREE_DAYS = 30
 # Member benefit: no service fee when the checkout's items subtotal (all
 # farms in one Place Order, before promo codes) is at least this much.

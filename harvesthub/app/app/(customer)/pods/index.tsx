@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { apiErrorMessage } from '../../../lib/apiError';
 import { Section } from '../../../components/Section';
 import { TextField } from '../../../components/TextField';
 import { POD_STATUS_LABELS, type PodSummary } from '../../../types/pods';
+import type { MembershipOverview } from '../../../types/membership';
 
 // Your Neighborhood Pods, and the two ways in: start one, or type in a code a
 // neighbor sent you (what someone new to the app does, since their invite link
@@ -20,6 +21,8 @@ export default function PodsScreen() {
   const [pods, setPods] = useState<PodSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [pass, setPass] = useState<MembershipOverview | null>(null);
+  const [startingFree, setStartingFree] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -30,8 +33,23 @@ export default function PodsScreen() {
         },
         (err) => setError(apiErrorMessage(err, "Couldn't load your pods. Try again.")),
       );
+      apiClient.get<MembershipOverview>('/membership').then(
+        (res) => setPass(res.data),
+        (err) => console.warn('Could not load Harvest Pass status:', err)
+      );
     }, [])
   );
+
+  const startFree = async () => {
+    setStartingFree(true);
+    try {
+      setPass((await apiClient.post<MembershipOverview>('/membership/start-free')).data);
+    } catch (err) {
+      Alert.alert("Couldn't start your free month", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setStartingFree(false);
+    }
+  };
 
   const cleanCode = code.trim().toUpperCase();
 
@@ -74,7 +92,9 @@ export default function PodsScreen() {
                     {pod.is_host ? ' · You host' : ''}
                   </Text>
                   <Text style={[styles.podStatus, pod.status === 'active' && styles.podStatusActive]}>
-                    {pod.needs_reapproval
+                    {pod.needs_pass
+                      ? 'Join Harvest Pass to order to this pod'
+                      : pod.needs_reapproval
                       ? 'Please approve the new drop point'
                       : pod.needs_drop_point
                         ? 'Needs a new drop point'
@@ -87,10 +107,35 @@ export default function PodsScreen() {
           </Section>
         ) : null}
 
-        <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/pods/new' as Href)}>
-          <MaterialIcons name="add" size={18} color={colors.white} />
-          <Text style={styles.primaryButtonText}>Start a pod</Text>
-        </Pressable>
+        {pass && !pass.is_member ? (
+          <View style={styles.locked}>
+            <View style={styles.lockedTitleRow}>
+              <MaterialIcons name="lock-outline" size={19} color={colors.primaryDark} />
+              <Text style={styles.lockedTitle}>Pods are for Harvest Pass members</Text>
+            </View>
+            <Text style={styles.lockedBody}>
+              With Harvest Pass you can start or join a pod, order to its drop point and split the delivery fee with your neighbors. You also
+              pay no service fee on orders of ${pass.free_service_fee_min_subtotal.toFixed(0)} or more.
+            </Text>
+            {pass.free_period_available ? (
+              <>
+                <Pressable style={[styles.primaryButton, startingFree && styles.disabled]} onPress={startFree} disabled={startingFree}>
+                  {startingFree ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonText}>Start free month</Text>}
+                </Pressable>
+                <Text style={styles.lockedFine}>No card needed to start your free month.</Text>
+              </>
+            ) : (
+              <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/harvest-pass')}>
+                <Text style={styles.primaryButtonText}>Join Harvest Pass</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : pass ? (
+          <Pressable style={styles.primaryButton} onPress={() => router.push('/(customer)/pods/new' as Href)}>
+            <MaterialIcons name="add" size={18} color={colors.white} />
+            <Text style={styles.primaryButtonText}>Start a pod</Text>
+          </Pressable>
+        ) : null}
 
         <Section title="Got an invite?" caption="Enter the 8-character code your neighbor sent you.">
           <View style={styles.codeRow}>
@@ -162,6 +207,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   primaryButtonText: { color: colors.white, fontSize: 15, fontWeight: '700' },
+  locked: { backgroundColor: colors.tint, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.lg },
+  lockedTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  lockedTitle: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.primaryDark },
+  lockedBody: { fontSize: 13.5, lineHeight: 19, color: colors.text, marginTop: spacing.xs },
+  lockedFine: { fontSize: 12.5, textAlign: 'center', color: colors.textMuted, marginTop: spacing.xs },
   codeRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   codeButton: {
     backgroundColor: colors.primary,

@@ -30,9 +30,10 @@ export interface Membership {
 export interface MembershipOverview {
   monthly_price: number;
   plans: PlanOption[];
-  free_days: number; // how long every new customer's free period lasts
+  free_days: number; // how long the free period lasts
   free_period_ends_at: string | null;
   free_period_active: boolean;
+  free_period_available: boolean; // never used: they can tap Start free month
   free_service_fee_min_subtotal: number;
   is_member: boolean; // has the benefits right now — paid, or the free period
   membership: Membership | null;

@@ -25,6 +25,11 @@ def read_membership(db: Session = Depends(get_db), customer=Depends(get_current_
     return service.get_overview(db, customer.id)
 
 
+@router.post("/start-free", response_model=MembershipOverviewOut)
+def start_free_month(db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return service.start_free_month(db, customer.id)
+
+
 @router.post("/prepare", response_model=PrepareJoinOut)
 def prepare_join(
     payload: PrepareJoinRequest,
