@@ -91,7 +91,7 @@ export function OrderStoreSection({
   const podClosed = podCharge !== null && podCharge.status !== 'awaiting' && podCharge.status !== 'not_placed';
   // Neither can a group deal's, once it exists: the deal has closed.
   const isDealOrder = !!storeOrder.group_deal_id;
-  const dealCardFailed = isDealOrder && paymentStatus === 'charge_failed' && storeOrder.status === 'pending_payment';
+  const dealCardFailed = isDealOrder && podCharge === null && paymentStatus === 'charge_failed' && storeOrder.status === 'pending_payment';
   const canCancel =
     !podClosed && !isDealOrder && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
   const canMarkReceived = storeOrder.status === 'ready_for_pickup';

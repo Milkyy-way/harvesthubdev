@@ -17,6 +17,15 @@ WITHDRAWN = "withdrawn"
 ORDERED = "ordered"
 NOT_CHARGED = "not_charged"
 
+# A place on a full deal's waitlist. Waiting -> offered (a share is held for 2
+# hours) -> claimed by joining | expired. Or left, or ended when the deal closes.
+WAITING = "waiting"
+OFFERED = "offered"
+CLAIMED = "claimed"
+OFFER_EXPIRED = "expired"
+LEFT = "left"
+ENDED = "ended"
+
 
 class GroupDeal(Base):
     """A lower price that unlocks if enough households join by the deadline.
@@ -58,6 +67,9 @@ class GroupDeal(Base):
     closed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     # A missed deal: until then, members who joined can buy at the regular price.
     fallback_ends_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # When followers of the farm were told it had opened.
+    members_told_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    public_told_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     published_at = Column(TIMESTAMP(timezone=True), nullable=True)
     cancelled_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -80,10 +92,38 @@ class GroupCommit(Base):
     delivery_starts_at = Column(TIMESTAMP(timezone=True), nullable=True)
     delivery_ends_at = Column(TIMESTAMP(timezone=True), nullable=True)
     delivery_fee = Column(Numeric(10, 2), nullable=False, default=0)  # what they were shown
+    # To their pod's drop point (0038): pod_full_fee is the most they can pay,
+    # and it's divided at the deadline. Set even if the pod is later deleted, so
+    # the order can't quietly become a delivery to their home.
+    pod_id = Column(UUID(as_uuid=True), nullable=True)
+    pod_full_fee = Column(Numeric(10, 2), nullable=True)
     member_at_join = Column(Boolean, nullable=False, default=False)
     stripe_setup_intent_id = Column(String, nullable=True)
     stripe_payment_method_id = Column(String, nullable=True)
     order_id = Column(UUID(as_uuid=True), nullable=True)
     joined_at = Column(TIMESTAMP(timezone=True), nullable=True)
     withdrawn_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+
+
+class GroupWaitlist(Base):
+    __tablename__ = "group_waitlist"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    deal_id = Column(UUID(as_uuid=True), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), nullable=False)
+    household_key = Column(String, nullable=False)
+    status = Column(String, nullable=False, default=WAITING)
+    offered_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    offer_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+
+
+class FarmFollow(Base):
+    """A customer following a farm, to hear when it publishes a deal."""
+
+    __tablename__ = "farm_follows"
+
+    customer_id = Column(UUID(as_uuid=True), primary_key=True)
+    farmer_id = Column(UUID(as_uuid=True), primary_key=True)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

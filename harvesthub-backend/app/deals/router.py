@@ -20,7 +20,9 @@ from app.deals.schemas import (
     DealPreviewOut,
     DealQuoteIn,
     DealQuoteOut,
+    DealRecordOut,
     DealSetupOut,
+    FollowOut,
 )
 from app.farmers.service import get_current_farmer
 
@@ -37,6 +39,11 @@ def my_deals(db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
 @router.get("/setup", response_model=DealSetupOut)
 def deal_setup(db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
     return service.setup(db, farmer.id)
+
+
+@router.get("/record", response_model=DealRecordOut)
+def deal_record(db: Session = Depends(get_db), farmer=Depends(get_current_farmer)):
+    return service.record(db, farmer.id)
 
 
 @router.post("/preview", response_model=DealPreviewOut)
@@ -122,3 +129,32 @@ def withdraw(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_c
 @customer_router.post("/{deal_id}/regular-price", response_model=CustomerDealOut)
 def buy_regular(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
     return closing.buy_at_regular_price(db, customer, deal_id)
+
+
+@customer_router.post("/{deal_id}/waitlist", response_model=CustomerDealOut)
+def join_waitlist(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.join_waitlist(db, customer, deal_id)
+
+
+@customer_router.delete("/{deal_id}/waitlist", response_model=CustomerDealOut)
+def leave_waitlist(deal_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return customer_side.leave_waitlist(db, customer, deal_id)
+
+
+# Following a farm: hearing when it publishes a deal.
+follow_router = APIRouter(prefix="/farm-follows", tags=["group deals"])
+
+
+@follow_router.get("/{farmer_id}", response_model=FollowOut)
+def am_i_following(farmer_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return {"following": customer_side.is_following(db, customer.id, farmer_id)}
+
+
+@follow_router.put("/{farmer_id}", response_model=FollowOut)
+def follow(farmer_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return {"following": customer_side.set_following(db, customer.id, farmer_id, True)}
+
+
+@follow_router.delete("/{farmer_id}", response_model=FollowOut)
+def unfollow(farmer_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    return {"following": customer_side.set_following(db, customer.id, farmer_id, False)}

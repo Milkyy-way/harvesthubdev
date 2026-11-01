@@ -7,6 +7,9 @@ order (app/pods/charging.py): a declined card gets one retry after 2 hours, then
 that household is dropped and its share goes back to stock. The deal is honored
 for everyone who paid, even if that leaves it below the goal.
 
+Pod members who chose their drop point split the farm's pod fee evenly among
+themselves here (decided with the user 2026-11-01), and share one stop on the run.
+
 Not enough: nobody is charged. If the farmer offered it, members who joined get
 24 hours to buy at the regular price, and the stock waits for them until then.
 
@@ -24,7 +27,19 @@ from sqlalchemy.orm import Session
 from app.customers.models import CustomerProfile
 from app.deals import customer as customer_side
 from app.deals import service
-from app.deals.models import ACTIVE, NOT_CHARGED, OPEN_STATUSES, ORDERED, GroupCommit, GroupDeal
+from app.deals.models import (
+    ACTIVE,
+    NOT_CHARGED,
+    OFFERED,
+    OFFER_EXPIRED,
+    OPEN_STATUSES,
+    ORDERED,
+    WAITING,
+    FarmFollow,
+    GroupCommit,
+    GroupDeal,
+    GroupWaitlist,
+)
 from app.delivery import service as delivery_service
 from app.delivery.models import FarmDeliverySettings
 from app.farmers.models import FarmerProfile
@@ -33,12 +48,14 @@ from app.notifications.service import Notice, notify_many
 from app.orders.models import Order, StoreOrder, StoreOrderItem
 from app.payments.models import CHARGING, Payment
 from app.pods import charging
+from app.pods.models import Pod
 from app.products.models import Product
 
 logger = logging.getLogger(__name__)
 
 FALLBACK_OFFER = timedelta(hours=24)
 _LAST_DAY = timedelta(hours=24)
+_ENDED_PODS = ("expired", "dissolved")
 
 
 def create_order_for(
@@ -50,11 +67,15 @@ def create_order_for(
     customer: CustomerProfile,
     is_member: bool,
     unit_price=None,
+    delivery_fee: float | None = None,
 ):
     """An ordinary order for one join, ready to charge. Its stock was already set
-    aside by the deal. Doesn't commit. Returns the payment's id."""
-    priced = customer_side.price_order(deal, product, farmer, commit.units, float(commit.delivery_fee), is_member, unit_price)
+    aside by the deal. Doesn't commit. Returns the payment's id. delivery_fee: this
+    household's share, for a pod's drop point."""
+    fee = float(commit.delivery_fee) if delivery_fee is None else delivery_fee
+    priced = customer_side.price_order(deal, product, farmer, commit.units, fee, is_member, unit_price)
     delivered = commit.fulfillment_method == "delivery"
+    pod = db.get(Pod, commit.pod_id) if commit.pod_full_fee is not None else None
     order = Order(id=uuid.uuid4(), customer_id=commit.customer_id)
     db.add(order)
     db.flush()
@@ -68,12 +89,15 @@ def create_order_for(
         pickup_address_city=farmer.address_city,
         pickup_address_state=farmer.address_state,
         pickup_address_zip=farmer.address_zip,
-        delivery_address_street=customer.street_line if delivered else None,
-        delivery_address_city=customer.address_city if delivered else None,
-        delivery_address_state=customer.address_state if delivered else None,
-        delivery_address_zip=customer.address_zip if delivered else None,
+        delivery_address_street=(pod.address_street if pod else customer.street_line) if delivered else None,
+        delivery_address_city=(pod.address_city if pod else customer.address_city) if delivered else None,
+        delivery_address_state=(pod.address_state if pod else customer.address_state) if delivered else None,
+        delivery_address_zip=(pod.address_zip if pod else customer.address_zip) if delivered else None,
         delivery_window_starts_at=commit.delivery_starts_at,
         delivery_window_ends_at=commit.delivery_ends_at,
+        pod_id=pod.id if pod else None,
+        pod_drop_version=pod.drop_version if pod else None,
+        pod_full_fee=commit.pod_full_fee if pod else None,
         group_deal_id=deal.id,
         subtotal=priced["subtotal"],
         promo_code=None,
@@ -134,6 +158,37 @@ def charge(db: Session, payment_id) -> None:
         db.rollback()
 
 
+def _cannot_deliver(commit: GroupCommit, pod: Pod | None, farmer, settings, customer: CustomerProfile | None) -> bool:
+    """They moved, the farm stopped delivering, or their pod ended. Leaving a pod
+    doesn't count: as with a pod order, what's placed is still delivered there."""
+    if customer is None:
+        return True
+    if commit.fulfillment_method != "delivery":
+        return False
+    if commit.pod_full_fee is not None:
+        return (
+            pod is None
+            or pod.status in _ENDED_PODS
+            or not pod.address_street
+            or not delivery_service.farm_reaches_pod(farmer, settings, pod)
+        )
+    return delivery_service.unavailable_reason(farmer, settings, customer) is not None
+
+
+def _pod_shares(going: list[GroupCommit]) -> dict:
+    """commit id -> this household's share of the pod fee: even across those going
+    to the same drop point in the same window, and never above what anyone saw."""
+    groups: dict = {}
+    for commit in going:
+        if commit.pod_full_fee is not None:
+            groups.setdefault((commit.pod_id, commit.delivery_starts_at), []).append(commit)
+    shares = {}
+    for members in groups.values():
+        share = delivery_service.pod_share(min(float(c.pod_full_fee) for c in members), len(members))
+        shares.update({c.id: share for c in members})
+    return shares
+
+
 def _close_unlocked(db: Session, deal: GroupDeal, active: list[GroupCommit], now: datetime) -> tuple[list, list]:
     product = db.query(Product).filter(Product.id == deal.product_id).with_for_update().one()
     farmer = db.get(FarmerProfile, deal.farmer_id)
@@ -141,18 +196,20 @@ def _close_unlocked(db: Session, deal: GroupDeal, active: list[GroupCommit], now
     context = customer_side.deal_context(db, deal)
     payment_ids, notices = [], []
     claimed = 0
+    going = []
     for commit in active:
         customer = db.get(CustomerProfile, commit.customer_id)
-        reason = (
-            delivery_service.unavailable_reason(farmer, settings, customer) if commit.fulfillment_method == "delivery" else None
-        )
-        if reason or customer is None:
-            # They moved, or the farm stopped delivering. Nothing is charged.
+        pod = db.get(Pod, commit.pod_id) if commit.pod_id else None
+        if _cannot_deliver(commit, pod, farmer, settings, customer):
             commit.status = NOT_CHARGED
             notices.append(Notice(commit.customer_id, "deal_undeliverable", context, f"deal_undeliverable:{deal.id}:{commit.customer_id}"))
-            continue
+        else:
+            going.append(commit)
+    shares = _pod_shares(going)
+    for commit in going:
+        customer = db.get(CustomerProfile, commit.customer_id)
         is_member = commit.member_at_join or membership_service.has_member_benefits(db, commit.customer_id)
-        payment_ids.append(create_order_for(db, deal, product, farmer, commit, customer, is_member))
+        payment_ids.append(create_order_for(db, deal, product, farmer, commit, customer, is_member, delivery_fee=shares.get(commit.id)))
         claimed += commit.units
         notices.append(Notice(commit.customer_id, "deal_unlocked", context, f"deal_unlocked:{deal.id}:{commit.customer_id}"))
 
@@ -207,6 +264,7 @@ def close_one(db: Session, deal_id, now: datetime) -> bool:
         .with_for_update()
         .all()
     )
+    service.end_waitlist(db, deal.id)
     payment_ids: list = []
     if len(active) >= deal.goal:
         payment_ids, notices = _close_unlocked(db, deal, active, now)
@@ -235,11 +293,10 @@ def buy_at_regular_price(db: Session, customer: CustomerProfile, deal_id: str) -
     if customer_side.fallback_offer(db, deal, commit, product, farmer, is_member, now) is None:
         db.commit()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This offer has ended.")
-    if commit.fulfillment_method == "delivery":
-        reason = delivery_service.unavailable_reason(farmer, db.get(FarmDeliverySettings, deal.farmer_id), customer)
-        if reason:
-            db.commit()
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+    pod = db.get(Pod, commit.pod_id) if commit.pod_id else None
+    if _cannot_deliver(commit, pod, farmer, db.get(FarmDeliverySettings, deal.farmer_id), customer):
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The farm can't deliver this to your address or pod anymore.")
     payment_id = create_order_for(db, deal, product, farmer, commit, customer, is_member, unit_price=deal.regular_price)
     deal.reserved_quantity = max(0, deal.reserved_quantity - customer_side.stock_for(deal, commit.units))
     db.commit()
@@ -267,6 +324,67 @@ def _warn_last_day(db: Session, now: datetime) -> int:
         notices.append(Notice(deal.farmer_id, "deal_farmer_last_day", context, f"deal_farmer_last_day:{deal.id}"))
     notify_many(db, notices)
     return len(notices)
+
+
+def _refresh_waitlists(db: Session, now: datetime) -> int:
+    """Offers that ran out pass to the next household in line."""
+    deal_ids = [
+        deal_id
+        for (deal_id,) in db.query(GroupWaitlist.deal_id)
+        .join(GroupDeal, GroupDeal.id == GroupWaitlist.deal_id)
+        .filter(GroupWaitlist.status.in_((WAITING, OFFERED)), GroupDeal.status.in_(OPEN_STATUSES), GroupDeal.deadline_at > now)
+        .distinct()
+    ]
+    offered = 0
+    for deal_id in deal_ids:
+        deal = db.query(GroupDeal).filter(GroupDeal.id == deal_id).with_for_update().first()
+        if deal is None:
+            continue
+        db.query(GroupWaitlist).filter(
+            GroupWaitlist.deal_id == deal_id, GroupWaitlist.status == OFFERED, GroupWaitlist.offer_expires_at <= now
+        ).update({"status": OFFER_EXPIRED}, synchronize_session=False)
+        db.flush()
+        notices = service.offer_next(db, deal, now)
+        db.commit()
+        notify_many(db, notices)
+        offered += len(notices)
+    return offered
+
+
+def _tell_followers(db: Session, now: datetime) -> int:
+    """A deal has opened: members following the farm hear first, and followers
+    without a pass hear when it opens to everyone. Each deal tells them once."""
+    deals = (
+        db.query(GroupDeal)
+        .filter(
+            GroupDeal.status.in_(("early_access", "live")),
+            GroupDeal.deadline_at > now,
+            (GroupDeal.members_told_at.is_(None)) | ((GroupDeal.status == "live") & (GroupDeal.public_told_at.is_(None))),
+        )
+        .all()
+    )
+    sent = 0
+    for deal in deals:
+        tell_members = deal.members_told_at is None
+        tell_public = deal.status == "live" and deal.public_told_at is None
+        deal.members_told_at = deal.members_told_at or now
+        if deal.status == "live":
+            deal.public_told_at = deal.public_told_at or now
+        context = customer_side.deal_context(db, deal)
+        joined = {c for (c,) in db.query(GroupCommit.customer_id).filter(GroupCommit.deal_id == deal.id, GroupCommit.status == ACTIVE)}
+        notices = []
+        for (customer_id,) in db.query(FarmFollow.customer_id).filter(FarmFollow.farmer_id == deal.farmer_id).all():
+            if customer_id in joined:
+                continue
+            member = membership_service.has_member_benefits(db, customer_id)
+            if member and tell_members:
+                notices.append(Notice(customer_id, "deal_published", {**context, "members_only": deal.status == "early_access"}, f"deal_published:{deal.id}:{customer_id}"))
+            elif not member and tell_public:
+                notices.append(Notice(customer_id, "deal_published", {**context, "members_only": False}, f"deal_published:{deal.id}:{customer_id}"))
+        db.commit()
+        notify_many(db, notices)
+        sent += len(notices)
+    return sent
 
 
 def _end_offers(db: Session, now: datetime) -> int:
@@ -302,6 +420,8 @@ def run(db: Session, now: datetime | None = None) -> dict:
             db.rollback()
     return {
         "deals_updated": updated,
+        "deal_followers_told": _tell_followers(db, now),
+        "deal_waitlist_offers": _refresh_waitlists(db, now),
         "deal_joins_adopted": adopted,
         "deals_closed": closed,
         "deal_warnings": _warn_last_day(db, now),

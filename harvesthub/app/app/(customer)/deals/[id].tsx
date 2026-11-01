@@ -11,6 +11,7 @@ import { apiErrorMessage } from '../../../lib/apiError';
 import { useCardSetupSheet } from '../../../lib/harvestPass';
 import { APP_SHARE_URL } from '../../../constants/legal';
 import { ALMOST_THERE, DealProgressBar } from '../../../components/customer/DealProgressBar';
+import { FollowFarmButton } from '../../../components/customer/FollowFarmButton';
 import { timeLeft, type CustomerDeal, type DealQuote } from '../../../types/deals';
 
 const when = (iso: string) =>
@@ -37,7 +38,8 @@ export default function CustomerDealScreen() {
 
   const [deal, setDeal] = useState<CustomerDeal | null>(null);
   const [units, setUnits] = useState(1);
-  const [method, setMethod] = useState<'pickup' | 'delivery'>('pickup');
+  const [method, setMethod] = useState<'pickup' | 'delivery' | 'pod'>('pickup');
+  const [podId, setPodId] = useState<string | null>(null);
   const [slot, setSlot] = useState<string | null>(null);
   const [quote, setQuote] = useState<DealQuote | null>(null);
   const [showWhy, setShowWhy] = useState(false);
@@ -65,7 +67,11 @@ export default function CustomerDealScreen() {
   useEffect(() => {
     if (!canJoin) return;
     let active = true;
-    apiClient.post<DealQuote>(`/deals/${id}/quote`, { units, fulfillment_method: method }).then(
+    apiClient.post<DealQuote>(`/deals/${id}/quote`, {
+      units,
+      fulfillment_method: method === 'pickup' ? 'pickup' : 'delivery',
+      pod_id: method === 'pod' ? podId : null,
+    }).then(
       (res) => {
         if (active) setQuote(res.data);
       },
@@ -77,7 +83,7 @@ export default function CustomerDealScreen() {
     return () => {
       active = false;
     };
-  }, [id, canJoin, units, method]);
+  }, [id, canJoin, units, method, podId]);
 
   if (!deal) {
     return (
@@ -94,6 +100,8 @@ export default function CustomerDealScreen() {
   const sharesLeft = Math.max(deal.capacity - deal.shares_claimed, 0);
   const inEarlyAccess = deal.status === 'early_access';
   const needsPass = inEarlyAccess && !deal.is_member;
+  const chosenPod = method === 'pod' ? (deal.pods.find((p) => p.pod_id === podId) ?? null) : null;
+  const heldForMe = deal.waitlist?.status === 'offered' ? deal.waitlist : null;
 
   const headline = deal.filled_by_members
     ? 'Filled by members'
@@ -133,7 +141,7 @@ export default function CustomerDealScreen() {
   };
 
   const joinDeal = async () => {
-    if (method === 'delivery' && !slot) {
+    if (method !== 'pickup' && !slot) {
       Alert.alert('Pick a delivery time', 'Choose when you want it delivered.');
       return;
     }
@@ -141,8 +149,9 @@ export default function CustomerDealScreen() {
     try {
       const res = await apiClient.post<{ setup_intent_client_secret: string }>(`/deals/${id}/join`, {
         units,
-        fulfillment_method: method,
-        delivery_starts_at: method === 'delivery' ? slot : null,
+        fulfillment_method: method === 'pickup' ? 'pickup' : 'delivery',
+        delivery_starts_at: method === 'pickup' ? null : slot,
+        pod_id: method === 'pod' ? podId : null,
       });
       if (await saveCard(res.data.setup_intent_client_secret, 'Save card and join')) {
         const joined = await apiClient.post<CustomerDeal>(`/deals/${id}/join/confirm`);
@@ -184,6 +193,32 @@ export default function CustomerDealScreen() {
       load();
     } catch (err) {
       Alert.alert("Couldn't start your free month", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const joinWaitlist = async () => {
+    setBusy(true);
+    try {
+      const res = await apiClient.post<CustomerDeal>(`/deals/${id}/waitlist`);
+      setDeal(res.data);
+    } catch (err) {
+      Alert.alert("Couldn't join the waitlist", apiErrorMessage(err, 'Please try again.'));
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leaveWaitlist = async () => {
+    setBusy(true);
+    try {
+      const res = await apiClient.delete<CustomerDeal>(`/deals/${id}/waitlist`);
+      setDeal(res.data);
+    } catch (err) {
+      Alert.alert("Couldn't leave the waitlist", apiErrorMessage(err, 'Please try again.'));
+      load();
     } finally {
       setBusy(false);
     }
@@ -244,6 +279,9 @@ export default function CustomerDealScreen() {
             {deal.farm_city ? `, ${deal.farm_city} ${deal.farm_state ?? ''}` : ''}
           </Text>
         </Pressable>
+        <View style={styles.followRow}>
+          <FollowFarmButton farmerId={deal.farmer_id} initial={deal.following_farm} />
+        </View>
 
         <Text style={styles.priceLine}>
           <Text style={styles.price}>{money(deal.share_price)}</Text>
@@ -266,8 +304,17 @@ export default function CustomerDealScreen() {
             sharesClaimed={deal.shares_claimed}
             capacity={deal.capacity}
             ended={deal.status === 'expired' ? 'missed' : deal.status === 'cancelled' || deal.status === 'full' ? 'muted' : undefined}
+            podHouseholds={deal.my_pod?.households}
           />
         </View>
+        {deal.my_pod ? (
+          <View style={styles.podRow}>
+            <MaterialIcons name="groups" size={16} color={colors.primaryDark} />
+            <Text style={styles.podText}>
+              Your Pod: {deal.my_pod.households} {deal.my_pod.households === 1 ? 'household' : 'households'} · {deal.my_pod.pod_name}
+            </Text>
+          </View>
+        ) : null}
 
         <Pressable onPress={() => setShowWhy(!showWhy)} accessibilityRole="button" style={styles.whyButton}>
           <Text style={styles.whyLink}>Why this price</Text>
@@ -287,8 +334,18 @@ export default function CustomerDealScreen() {
             <Text style={styles.inTitle}>You&apos;re in</Text>
             <Text style={styles.inBody}>
               Charged only if the goal holds at the deadline, {when(deal.deadline_at)}.{' '}
-              {commit.fulfillment_method === 'delivery' ? `Delivery ${commit.delivery_label}.` : `Pickup at the farm.`}
+              {commit.pod_name
+                ? `Delivery ${commit.delivery_label} to ${commit.pod_name}'s drop point.`
+                : commit.fulfillment_method === 'delivery'
+                  ? `Delivery ${commit.delivery_label}.`
+                  : `Pickup at the farm.`}
             </Text>
+            {commit.pod_share_now !== null ? (
+              <Text style={styles.inBody}>
+                Delivery is {money(commit.pod_share_now)} right now, split with neighbors in this deal. It won&apos;t be more than{' '}
+                {money(commit.delivery_fee)}.
+              </Text>
+            ) : null}
             {commit.can_withdraw ? (
               <>
                 <Text style={styles.inFine}>You can withdraw until {when(deal.withdraw_locks_at)}.</Text>
@@ -355,6 +412,39 @@ export default function CustomerDealScreen() {
           </View>
         ) : null}
 
+        {deal.can_waitlist ? (
+          <View style={styles.inBox}>
+            <Text style={styles.inTitle}>Join the waitlist</Text>
+            <Text style={styles.inBody}>
+              If someone withdraws, the next household in line gets 2 hours to claim the share. No card is needed for this.
+            </Text>
+            <Pressable style={[styles.primary, busy && styles.disabled]} onPress={joinWaitlist} disabled={busy}>
+              {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryText}>Join waitlist</Text>}
+            </Pressable>
+          </View>
+        ) : null}
+
+        {deal.waitlist && !heldForMe ? (
+          <View style={styles.inBox}>
+            <Text style={styles.inTitle}>You&apos;re number {deal.waitlist.position} on the waitlist</Text>
+            <Text style={styles.inBody}>We&apos;ll tell you if a share opens up. You&apos;d have 2 hours to claim it.</Text>
+            <Pressable style={styles.secondary} onPress={leaveWaitlist} disabled={busy}>
+              <Text style={styles.dangerText}>Leave the waitlist</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {heldForMe?.offer_expires_at ? (
+          <View style={styles.offerBox}>
+            <Text style={styles.offerEyebrow}>HELD FOR YOU · until {when(heldForMe.offer_expires_at)}</Text>
+            <Text style={styles.inTitle}>A share opened up</Text>
+            <Text style={styles.inBody}>Commit below to claim it. After that time it goes to the next household.</Text>
+            <Pressable style={styles.secondary} onPress={leaveWaitlist} disabled={busy}>
+              <Text style={styles.dangerText}>No thanks</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {canJoin ? (
           <>
             <Text style={styles.sectionTitle}>How do you want it?</Text>
@@ -371,8 +461,27 @@ export default function CustomerDealScreen() {
             <View style={styles.chips}>
               <Chip label="Pickup at the farm" selected={method === 'pickup'} onPress={() => setMethod('pickup')} />
               {deal.delivery.available ? (
-                <Chip label={`Home delivery · ${money(deal.delivery.fee)}`} selected={method === 'delivery'} onPress={() => setMethod('delivery')} />
+                <Chip
+                  label={`Home delivery · ${money(deal.delivery.fee)}`}
+                  selected={method === 'delivery'}
+                  onPress={() => {
+                    setMethod('delivery');
+                    setSlot(null);
+                  }}
+                />
               ) : null}
+              {deal.pods.map((p) => (
+                <Chip
+                  key={p.pod_id}
+                  label={`${p.pod_name} drop point · ${money(p.share_now)}${p.share_now < p.full_fee ? ' now' : ''}`}
+                  selected={method === 'pod' && podId === p.pod_id}
+                  onPress={() => {
+                    setMethod('pod');
+                    setPodId(p.pod_id);
+                    setSlot(null);
+                  }}
+                />
+              ))}
             </View>
             {method === 'pickup' ? (
               <Text style={styles.caption}>
@@ -383,16 +492,23 @@ export default function CustomerDealScreen() {
               <>
                 <Text style={styles.caption}>
                   {deal.fulfillment_date ? `${dayLabel(deal.fulfillment_date)}, to ` : 'To '}
-                  {deal.delivery.address_line}
+                  {chosenPod ? chosenPod.drop_address_line : deal.delivery.address_line}
                 </Text>
+                {chosenPod ? (
+                  <Text style={styles.caption}>
+                    The fee is split evenly among your pod members in this deal who choose the drop point, so it falls as neighbors join.
+                    You&apos;ll never pay more than {money(chosenPod.full_fee)} for delivery.
+                  </Text>
+                ) : null}
                 <View style={[styles.chips, styles.chipsSpaced]}>
-                  {deal.delivery.slots.map((s) => (
+                  {(chosenPod ? chosenPod.slots : deal.delivery.slots).map((s) => (
                     <Chip key={s.starts_at} label={s.label} selected={slot === s.starts_at} onPress={() => setSlot(s.starts_at)} />
                   ))}
                 </View>
               </>
             )}
             {!deal.delivery.available && deal.delivery.reason ? <Text style={styles.caption}>{deal.delivery.reason}</Text> : null}
+            {deal.pod_note ? <Text style={styles.caption}>{deal.pod_note}</Text> : null}
 
             {quote ? (
               <View style={styles.costBox}>
@@ -400,8 +516,9 @@ export default function CustomerDealScreen() {
                 <Cost label="Service fee" value={money(quote.service_fee)} />
                 {quote.member_savings > 0 ? <Cost label="Harvest Pass took off" value={`-${money(quote.member_savings)}`} /> : null}
                 {method === 'delivery' ? <Cost label="Delivery" value={money(quote.delivery_fee)} /> : null}
+                {method === 'pod' ? <Cost label="Delivery, at most" value={money(quote.delivery_fee)} /> : null}
                 {quote.tax > 0 ? <Cost label="Tax" value={money(quote.tax)} /> : null}
-                <Cost label="If it unlocks, you pay" value={money(quote.total)} strong />
+                <Cost label={method === 'pod' ? 'If it unlocks, you pay at most' : 'If it unlocks, you pay'} value={money(quote.total)} strong />
               </View>
             ) : null}
 
@@ -421,7 +538,7 @@ export default function CustomerDealScreen() {
           </>
         ) : null}
 
-        {!canJoin && !commit && running && !needsPass && deal.join_blocked_reason ? (
+        {!canJoin && !commit && running && !needsPass && !deal.can_waitlist && !deal.waitlist && deal.join_blocked_reason ? (
           <Text style={styles.blocked}>{deal.join_blocked_reason}</Text>
         ) : null}
 
@@ -478,6 +595,9 @@ const styles = StyleSheet.create({
   eyebrow: { fontSize: 12.5, fontWeight: '700', color: colors.primary, marginTop: spacing.md },
   title: { fontFamily: fonts.headlineBold, fontSize: 28, lineHeight: 34, color: colors.text, marginTop: 2 },
   farm: { fontSize: 13.5, color: colors.textMuted, marginTop: 2 },
+  followRow: { marginTop: spacing.sm },
+  podRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.xs },
+  podText: { fontSize: 13, fontWeight: '700', color: colors.primaryDark },
   priceLine: { marginTop: spacing.sm },
   price: { fontFamily: fonts.headlineBold, fontSize: 24, color: colors.primaryDark },
   regular: { fontSize: 15, color: colors.textMuted, textDecorationLine: 'line-through' },

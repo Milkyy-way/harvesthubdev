@@ -457,6 +457,32 @@ def deal_joined(ctx: dict) -> Message:
     )
 
 
+def deal_published(ctx: dict) -> Message:
+    """ctx: deal_id, product_name, farm_name, goal, deadline_at, members_only."""
+    head_start = " Harvest Pass members get the first 24 hours." if ctx["members_only"] else ""
+    return Message(
+        title=f"{ctx['farm_name']} has a new group deal",
+        body=f"{ctx['product_name']}: a lower price if {ctx['goal']} households join.{head_start}",
+        channels=(PUSH,),
+        url=_deal_url(ctx),
+    )
+
+
+def deal_waitlist_offer(ctx: dict) -> Message:
+    """ctx: deal_id, product_name, farm_name, offer_expires_at."""
+    until = _when(ctx["offer_expires_at"])
+    return Message(
+        title="A share opened up for you",
+        body=f"{ctx['product_name']}: it's held for you until {until}. Open the deal to claim it.",
+        channels=(PUSH, EMAIL),
+        url=_deal_url(ctx),
+        email_paragraphs=[
+            f"A share of the {ctx['product_name']} group deal from {ctx['farm_name']} has opened up, and you're next on the waitlist.",
+            f"It's held for you until {until}. After that it goes to the next household. Open the deal in the app to claim it.",
+        ],
+    )
+
+
 def deal_progress(ctx: dict) -> Message:
     """ctx: as deal_joined, plus milestone ('50', '80' or 'goal')."""
     left = max(ctx["goal"] - ctx["households"], 0)
@@ -538,7 +564,7 @@ def deal_cancelled(ctx: dict) -> Message:
 
 def deal_undeliverable(ctx: dict) -> Message:
     """ctx: as deal_joined."""
-    body = f"{ctx['farm_name']} can't deliver your {ctx['product_name']} deal to your current address, so you weren't charged."
+    body = f"{ctx['farm_name']} can't deliver your {ctx['product_name']} deal to your address or pod anymore, so you weren't charged."
     return Message(title="We couldn't include your order", body=body, channels=(PUSH, EMAIL), url=_deal_url(ctx), email_paragraphs=[body])
 
 
@@ -751,6 +777,8 @@ BUILDERS = {
     "pod_membership_lapsing": pod_membership_lapsing,
     "pod_removed": pod_removed,
     "pod_promo": pod_promo,
+    "deal_published": deal_published,
+    "deal_waitlist_offer": deal_waitlist_offer,
     "deal_joined": deal_joined,
     "deal_progress": deal_progress,
     "deal_last_day": deal_last_day,

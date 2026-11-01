@@ -104,10 +104,23 @@ class DealOut(BaseModel):
     extended_once: bool
     can_extend: bool
     fallback_ends_at: Optional[str]
+    waitlist_count: int
 
 
 class DealListOut(BaseModel):
     deals: list[DealOut]
+
+
+class DealRecordOut(BaseModel):
+    """The farmer's record: for coaching, not punishing."""
+
+    deals_finished: int
+    deals_unlocked: int
+    deals_expired: int
+    deals_cancelled: int
+    deals_cancelled_after_goal: int
+    orders_not_filled: int
+    tip: Optional[str]
 
 
 # --- The customer's side ---------------------------------------------------------------
@@ -116,6 +129,7 @@ class DealListOut(BaseModel):
 class DealQuoteIn(BaseModel):
     units: int = Field(default=1, ge=1, le=10)
     fulfillment_method: Literal["pickup", "delivery"] = "pickup"
+    pod_id: Optional[str] = Field(default=None, max_length=40)
 
 
 class DealJoinIn(DealQuoteIn):
@@ -130,6 +144,9 @@ class DealQuoteOut(BaseModel):
     delivery_fee: float
     tax: float
     total: float
+    # To a pod's drop point: delivery_fee and total are the most it can come to,
+    # and this is each member's share as things stand.
+    pod_share_now: Optional[float] = None
 
 
 class DealJoinOut(BaseModel):
@@ -171,6 +188,8 @@ class MyCommitOut(BaseModel):
     fulfillment_method: str
     delivery_label: Optional[str]
     delivery_fee: float
+    pod_name: Optional[str]
+    pod_share_now: Optional[float]
     can_withdraw: bool
     order_id: Optional[str]
     order_status: Optional[str]
@@ -196,6 +215,27 @@ class DealDeliveryOut(BaseModel):
     address_line: str
 
 
+class DealPodChoiceOut(BaseModel):
+    pod_id: str
+    pod_name: str
+    drop_address_line: str
+    full_fee: float
+    share_now: float
+    slots: list[DealSlotOut]
+
+
+class MyPodCountOut(BaseModel):
+    pod_id: str
+    pod_name: str
+    households: int
+
+
+class DealWaitlistOut(BaseModel):
+    status: str
+    position: Optional[int]
+    offer_expires_at: Optional[str]
+
+
 class CustomerDealOut(DealCardOut):
     description: Optional[str]
     max_units: int
@@ -211,3 +251,13 @@ class CustomerDealOut(DealCardOut):
     fallback: Optional[FallbackOfferOut]
     pickup_address: str
     delivery: DealDeliveryOut
+    pods: list[DealPodChoiceOut]
+    pod_note: Optional[str]
+    my_pod: Optional[MyPodCountOut]
+    waitlist: Optional[DealWaitlistOut]
+    can_waitlist: bool
+    following_farm: bool
+
+
+class FollowOut(BaseModel):
+    following: bool

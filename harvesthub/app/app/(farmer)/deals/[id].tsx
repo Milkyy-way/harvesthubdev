@@ -210,6 +210,7 @@ export default function DealScreen() {
           </>
         ) : null}
 
+        {deal.waitlist_count > 0 ? <Row label="On the waitlist" value={String(deal.waitlist_count)} /> : null}
         <Row label="Households to unlock" value={String(deal.goal)} />
         <Row label="Shares available" value={String(deal.capacity)} />
         <Row label="Each household may claim" value={String(deal.max_units)} />

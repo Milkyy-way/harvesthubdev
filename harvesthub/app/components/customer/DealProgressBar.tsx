@@ -12,12 +12,14 @@ export function DealProgressBar({
   sharesClaimed,
   capacity,
   ended,
+  podHouseholds,
 }: {
   households: number;
   goal: number;
   sharesClaimed: number;
   capacity: number;
   ended?: 'missed' | 'muted';
+  podHouseholds?: number; // their pod's part of the count, highlighted
 }) {
   const metGoal = households >= goal;
   const fraction = Math.min(metGoal ? sharesClaimed / Math.max(capacity, 1) : households / Math.max(goal, 1), 1);
@@ -52,6 +54,9 @@ export function DealProgressBar({
     <View accessible accessibilityRole="progressbar" accessibilityLabel={label} accessibilityValue={{ now: Math.round(fraction * 100), min: 0, max: 100 }}>
       <View style={[styles.track, ended === 'missed' && styles.trackMissed]}>
         <Animated.View style={[styles.fill, { width: `${fraction * 100}%`, backgroundColor: ended === 'missed' ? colors.berry : fill, opacity: pulse }]} />
+        {(podHouseholds ?? 0) > 0 && !metGoal && !ended ? (
+          <View style={[styles.podSegment, { width: `${Math.min((podHouseholds ?? 0) / Math.max(goal, 1), 1) * 100}%` }]} />
+        ) : null}
         {!metGoal ? <View style={styles.tick} /> : null}
       </View>
       <View style={styles.row}>
@@ -66,6 +71,7 @@ const styles = StyleSheet.create({
   track: { height: 10, borderRadius: radius.pill, backgroundColor: colors.border, overflow: 'hidden' },
   trackMissed: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.berry },
   fill: { height: '100%', borderRadius: radius.pill },
+  podSegment: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: colors.primaryDark, borderRadius: radius.pill },
   // The halfway mark.
   tick: { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, backgroundColor: colors.background },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm, marginTop: spacing.xs },

@@ -18,13 +18,24 @@ from sqlalchemy.orm import Session
 
 from app.categories.models import Category
 from app.core.pricing import FARMER_COMMISSION_RATE
-from app.deals.models import ACTIVE, NOT_CHARGED, OPEN_STATUSES, ORDERED, GroupCommit, GroupDeal
+from app.deals.models import (
+    ACTIVE,
+    ENDED,
+    NOT_CHARGED,
+    OFFERED,
+    OPEN_STATUSES,
+    ORDERED,
+    WAITING,
+    GroupCommit,
+    GroupDeal,
+    GroupWaitlist,
+)
 from app.deals.schemas import DealChangeIn, DealIn
 from app.delivery.models import FarmDeliverySettings, FarmDeliveryWindow
 from app.farmers.models import FarmerProfile
 from app.notifications.service import Notice, notify_many
 from app.orders import service as orders_service
-from app.orders.models import Order, StoreOrder
+from app.orders.models import Order, OrderCancellation, StoreOrder
 from app.payments.models import Payment
 from app.products.models import Product
 
@@ -44,6 +55,8 @@ MIN_SHARE_PRICE = Decimal("0.50")  # Stripe won't charge less
 # One extension, only for a deal close to its goal with time still on the clock.
 EXTEND_MIN_PROGRESS = Decimal("0.70")
 EXTEND_MIN_TIME_LEFT = timedelta(hours=24)
+# A withdrawal offers the share to the next household on the waitlist.
+WAITLIST_OFFER = timedelta(hours=2)
 
 _CENT = Decimal("0.01")
 
@@ -244,6 +257,67 @@ def counts(db: Session, deal_id) -> tuple[int, int]:
     return households, int(shares)
 
 
+def spoken_for(db: Session, deal_id, moment: datetime, except_customer=None, offers_only: bool = False) -> int:
+    """Shares nobody else can take: one held for each live offer, and one for
+    each household still waiting its turn (unless offers_only)."""
+    live_offer = (GroupWaitlist.status == OFFERED) & (GroupWaitlist.offer_expires_at > moment)
+    q = db.query(func.count(GroupWaitlist.id)).filter(
+        GroupWaitlist.deal_id == deal_id,
+        live_offer if offers_only else ((GroupWaitlist.status == WAITING) | live_offer),
+    )
+    if except_customer is not None:
+        q = q.filter(GroupWaitlist.customer_id != except_customer)
+    return q.scalar() or 0
+
+
+def offer_next(db: Session, deal: GroupDeal, moment: datetime) -> list:
+    """Offer any free shares down the waitlist, under the deal's lock. Doesn't
+    commit. Returns the notices to send once the caller has."""
+    if deal.status not in OPEN_STATUSES or moment >= deal.deadline_at:
+        return []
+    _, shares = counts(db, deal.id)
+    live_offers = (
+        db.query(func.count(GroupWaitlist.id))
+        .filter(GroupWaitlist.deal_id == deal.id, GroupWaitlist.status == OFFERED, GroupWaitlist.offer_expires_at > moment)
+        .scalar()
+        or 0
+    )
+    free = deal.capacity - shares - live_offers
+    if free <= 0:
+        return []
+    waiting = (
+        db.query(GroupWaitlist)
+        .filter(GroupWaitlist.deal_id == deal.id, GroupWaitlist.status == WAITING)
+        .order_by(GroupWaitlist.created_at)
+        .limit(free)
+        .with_for_update()
+        .all()
+    )
+    if not waiting:
+        return []
+    product = db.get(Product, deal.product_id)
+    notices = []
+    for row in waiting:
+        row.status = OFFERED
+        row.offered_at = moment
+        row.offer_expires_at = min(moment + WAITLIST_OFFER, deal.deadline_at)
+        notices.append(
+            Notice(
+                row.customer_id,
+                "deal_waitlist_offer",
+                {**_context(db, deal, product), "offer_expires_at": row.offer_expires_at},
+                f"deal_waitlist_offer:{row.id}",
+            )
+        )
+    return notices
+
+
+def end_waitlist(db: Session, deal_id) -> None:
+    db.query(GroupWaitlist).filter(GroupWaitlist.deal_id == deal_id, GroupWaitlist.status.in_((WAITING, OFFERED))).update(
+        {"status": ENDED}, synchronize_session=False
+    )
+
+
 def payout_of(deal: GroupDeal) -> dict:
     return _payout(deal.regular_price, deal.deal_price, deal.share_size, deal.goal, deal.capacity)
 
@@ -311,6 +385,7 @@ def _out(db: Session, deal: GroupDeal, product: Product, now: datetime) -> dict:
         "extended_once": deal.extended_once,
         "can_extend": _can_extend(deal, households, now),
         "fallback_ends_at": deal.fallback_ends_at.isoformat() if deal.fallback_ends_at else None,
+        "waitlist_count": spoken_for(db, deal.id, now),
     }
 
 
@@ -551,8 +626,11 @@ def change_published(db: Session, farmer_id, deal_id: str, payload: DealChangeIn
         product.quantity_available -= max(needed, 0)
         deal.reserved_quantity += max(needed, 0)
         deal.capacity = payload.capacity
+    db.flush()
+    offers = offer_next(db, deal, moment)
     db.commit()
     out = _out(db, deal, product, moment)
+    notify_many(db, offers)
     if better_price or better_goal:
         context = {
             **_context(db, deal, product),
@@ -626,6 +704,7 @@ def cancel(db: Session, farmer_id, deal_id: str, reason: str | None) -> dict:
         for store_order_id in store_order_ids:
             orders_service.farmer_cancel_store_order(db, farmer_id, store_order_id, reason)
         deal = _owned_deal(db, farmer_id, deal_id, lock=True)
+        end_waitlist(db, deal.id)
         deal.status = "cancelled"
         deal.cancelled_at = moment
         deal.cancel_reason = reason
@@ -636,6 +715,7 @@ def cancel(db: Session, farmer_id, deal_id: str, reason: str | None) -> dict:
         commit.status = NOT_CHARGED
         notices.append(Notice(commit.customer_id, "deal_cancelled", context, f"deal_cancelled:{deal.id}:{commit.customer_id}"))
     give_stock_back(db, deal)
+    end_waitlist(db, deal.id)
     deal.status = "cancelled"
     deal.cancelled_at = moment
     deal.closed_at = moment
@@ -644,6 +724,39 @@ def cancel(db: Session, farmer_id, deal_id: str, reason: str | None) -> dict:
     out = _out(db, deal, product, moment)
     notify_many(db, notices)
     return out
+
+
+def record(db: Session, farmer_id) -> dict:
+    """How a farm's deals have gone. The tip follows the spec: coach, don't punish."""
+    finished = (
+        db.query(GroupDeal)
+        .filter(GroupDeal.farmer_id == farmer_id, GroupDeal.status.in_(("unlocked", "expired", "cancelled")))
+        .order_by(GroupDeal.deadline_at.desc())
+        .all()
+    )
+    by_status = {status_: sum(1 for d in finished if d.status == status_) for status_ in ("unlocked", "expired", "cancelled")}
+    after_goal = sum(1 for d in finished if d.status == "cancelled" and d.cancel_reason)
+    not_filled = (
+        db.query(func.count(StoreOrder.id))
+        .join(OrderCancellation, OrderCancellation.store_order_id == StoreOrder.id)
+        .filter(StoreOrder.farmer_id == farmer_id, StoreOrder.group_deal_id.isnot(None), OrderCancellation.cancelled_by_role == "farmer")
+        .scalar()
+        or 0
+    )
+    tip = None
+    if len(finished) >= 3 and all(d.status == "expired" for d in finished[:3]):
+        tip = "Your last three deals didn't reach their goals. A lower goal could help the next one unlock."
+    elif not_filled:
+        tip = "When you can't fill an order, customers are refunded. Setting aside only what you're sure of helps."
+    return {
+        "deals_finished": len(finished),
+        "deals_unlocked": by_status["unlocked"],
+        "deals_expired": by_status["expired"],
+        "deals_cancelled": by_status["cancelled"],
+        "deals_cancelled_after_goal": after_goal,
+        "orders_not_filled": not_filled,
+        "tip": tip,
+    }
 
 
 def has_open_deal(db: Session, product_id) -> bool:

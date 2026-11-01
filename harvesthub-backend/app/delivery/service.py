@@ -944,6 +944,18 @@ def unavailable_reason(farmer, settings, customer) -> str | None:
     return _unavailable_reason(farmer, settings, customer)
 
 
+def pods_of(db: Session, customer_id) -> list:
+    return _pods_of(db, customer_id)
+
+
+def farm_reaches_pod(farmer, settings, pod: Pod) -> bool:
+    return _reaches(farmer, settings, pod.latitude, pod.longitude)
+
+
+def pod_address_line(pod: Pod) -> str:
+    return _address_line(pod.address_street, pod.address_city, pod.address_state, pod.address_zip)
+
+
 def windows_of(db: Session, farmer_id) -> list:
     return _windows(db, farmer_id)
 

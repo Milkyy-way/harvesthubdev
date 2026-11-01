@@ -99,6 +99,17 @@ export type Deal = DealForm & {
   extended_once: boolean;
   can_extend: boolean;
   fallback_ends_at: string | null;
+  waitlist_count: number;
+};
+
+export type DealRecord = {
+  deals_finished: number;
+  deals_unlocked: number;
+  deals_expired: number;
+  deals_cancelled: number;
+  deals_cancelled_after_goal: number;
+  orders_not_filled: number;
+  tip: string | null;
 };
 
 // --- The customer's side -----------------------------------------------------
@@ -136,6 +147,19 @@ export type DealQuote = {
   delivery_fee: number;
   tax: number;
   total: number;
+  // To a pod's drop point: delivery_fee and total are the most it can come to.
+  pod_share_now: number | null;
+};
+
+export type DealSlot = { starts_at: string; ends_at: string; label: string };
+
+export type DealPodChoice = {
+  pod_id: string;
+  pod_name: string;
+  drop_address_line: string;
+  full_fee: number;
+  share_now: number;
+  slots: DealSlot[];
 };
 
 export type CustomerDeal = CustomerDealCard & {
@@ -155,6 +179,8 @@ export type CustomerDeal = CustomerDealCard & {
     fulfillment_method: 'pickup' | 'delivery';
     delivery_label: string | null;
     delivery_fee: number;
+    pod_name: string | null;
+    pod_share_now: number | null;
     can_withdraw: boolean;
     order_id: string | null;
     order_status: string | null;
@@ -165,9 +191,15 @@ export type CustomerDeal = CustomerDealCard & {
     available: boolean;
     reason: string | null;
     fee: number;
-    slots: { starts_at: string; ends_at: string; label: string }[];
+    slots: DealSlot[];
     address_line: string;
   };
+  pods: DealPodChoice[];
+  pod_note: string | null;
+  my_pod: { pod_id: string; pod_name: string; households: number } | null;
+  waitlist: { status: 'waiting' | 'offered'; position: number | null; offer_expires_at: string | null } | null;
+  can_waitlist: boolean;
+  following_farm: boolean;
 };
 
 // Days until the last 24 hours, then hours and minutes.

@@ -7,13 +7,14 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { apiErrorMessage } from '../../../lib/apiError';
-import { DEAL_STATUS_LABELS, OPEN_DEAL_STATUSES, type Deal } from '../../../types/deals';
+import { DEAL_STATUS_LABELS, OPEN_DEAL_STATUSES, type Deal, type DealRecord } from '../../../types/deals';
 
 // A farm's group deals, newest first. See harvesthub-backend/app/deals/service.py.
 export default function DealsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [deals, setDeals] = useState<Deal[] | null>(null);
+  const [record, setRecord] = useState<DealRecord | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +23,10 @@ export default function DealsScreen() {
       const res = await apiClient.get<{ deals: Deal[] }>('/farmers/me/deals');
       setDeals(res.data.deals);
       setError(null);
+      apiClient.get<DealRecord>('/farmers/me/deals/record').then(
+        (rec) => setRecord(rec.data),
+        (err) => console.warn('Could not load your deal record:', err)
+      );
     } catch (err) {
       setError(apiErrorMessage(err, "Couldn't load your deals. Pull down to try again."));
     } finally {
@@ -68,6 +73,16 @@ export default function DealsScreen() {
               <Text style={styles.newText}>New deal</Text>
             </Pressable>
             {error ? <Text style={styles.error}>{error}</Text> : null}
+            {record && record.deals_finished > 0 ? (
+              <View style={styles.record}>
+                <Text style={styles.recordTitle}>Your record</Text>
+                <Text style={styles.recordLine}>
+                  {record.deals_unlocked} unlocked · {record.deals_expired} missed · {record.deals_cancelled} cancelled
+                  {record.orders_not_filled > 0 ? ` · ${record.orders_not_filled} orders not filled` : ''}
+                </Text>
+                {record.tip ? <Text style={styles.recordTip}>{record.tip}</Text> : null}
+              </View>
+            ) : null}
           </>
         }
         ListEmptyComponent={
@@ -129,6 +144,10 @@ const styles = StyleSheet.create({
   },
   newText: { color: colors.white, fontSize: 15, fontWeight: '700' },
   error: { color: colors.danger, fontSize: 13, marginTop: spacing.sm },
+  record: { backgroundColor: colors.tint, borderRadius: radius.lg, padding: spacing.md, marginTop: spacing.sm },
+  recordTitle: { fontFamily: fonts.headlineBold, fontSize: 17, color: colors.primaryDark },
+  recordLine: { fontSize: 13, lineHeight: 19, color: colors.text, marginTop: 2 },
+  recordTip: { fontSize: 13, lineHeight: 19, fontWeight: '600', color: colors.primaryDark, marginTop: spacing.xs },
   loading: { marginTop: spacing.xl },
   empty: { fontSize: 14, color: colors.textMuted, textAlign: 'center', marginTop: spacing.lg },
   row: {
