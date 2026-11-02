@@ -43,3 +43,13 @@ class FreePeriod(Base):
     starts_at = Column(TIMESTAMP(timezone=True), nullable=False)
     ends_at = Column(TIMESTAMP(timezone=True), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+
+
+class FreeMonthIdentifier(Base):
+    """A keyed hash of an email or phone that has had a free month. No link to any
+    account, and it stays after the account is deleted (free_month_guard.py)."""
+
+    __tablename__ = "free_month_identifiers"
+
+    identifier_hash = Column(String, primary_key=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

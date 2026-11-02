@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # characters at Apple Developer -> Membership details -> Team ID. Not
     # secret. Unset = links open in the browser, with a button into the app.
     APPLE_TEAM_ID: str | None = None
+    # Secret. Keys the hashes behind "one free month per person"
+    # (app/membership/free_month_guard.py). Unset = free months aren't checked.
+    # Don't change it once set: the list would stop matching anyone.
+    FREE_MONTH_HASH_KEY: str | None = None
 
     class Config:
         env_file = ".env"

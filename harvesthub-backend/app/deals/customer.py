@@ -21,6 +21,7 @@ from app.core.localtime import LOCAL_TZ
 from app.core.pricing import MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL, SERVICE_FEE_RATE
 from app.core.tax import compute_item_tax
 from app.customers.models import CustomerProfile
+from app.customers.places import browse_point
 from app.deals import service
 from app.deals.household import household_key
 from app.deals.models import (
@@ -334,12 +335,13 @@ def list_deals(db: Session, customer: CustomerProfile, farmer_id: str | None = N
         except ValueError:
             return []
 
+    point = browse_point(db, customer)
     out = []
     for deal, product, farmer in query.order_by(GroupDeal.deadline_at).all():
         phase = service.current_status(deal, now)
         joined = deal.id in mine
         if phase in ("early_access", "live"):
-            if not joined and not _within_reach(customer, farmer):
+            if not joined and not _within_reach(point, farmer):
                 continue
         elif not (joined and deal.closed_at and now - deal.closed_at < timedelta(days=_RESULT_DAYS)) and not (joined and phase == "closing"):
             continue
@@ -350,10 +352,10 @@ def list_deals(db: Session, customer: CustomerProfile, farmer_id: str | None = N
     return out
 
 
-def _within_reach(customer: CustomerProfile, farmer: FarmerProfile) -> bool:
-    if customer.latitude is None or farmer.latitude is None:
+def _within_reach(point: tuple, farmer: FarmerProfile) -> bool:
+    if point[0] is None or farmer.latitude is None:
         return True
-    return haversine_km(customer.latitude, customer.longitude, farmer.latitude, farmer.longitude) / KM_PER_MILE <= MAX_LISTING_MILES
+    return haversine_km(point[0], point[1], farmer.latitude, farmer.longitude) / KM_PER_MILE <= MAX_LISTING_MILES
 
 
 def _commit_out(db: Session, deal: GroupDeal, commit: GroupCommit, now: datetime) -> dict:

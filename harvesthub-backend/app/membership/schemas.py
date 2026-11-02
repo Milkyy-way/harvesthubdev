@@ -36,6 +36,7 @@ class MembershipOverviewOut(BaseModel):
     free_period_ends_at: Optional[str]
     free_period_active: bool
     free_period_available: bool  # never used: they can tap Start free month
+    free_month_used_elsewhere: bool = False  # this email or phone already had one
     free_service_fee_min_subtotal: float
     is_member: bool  # has the benefits right now — paid, or the free period
     membership: Optional[MembershipOut]

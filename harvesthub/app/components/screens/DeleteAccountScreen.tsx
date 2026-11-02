@@ -83,7 +83,7 @@ export default function DeleteAccountScreen() {
       ];
   const kept = isFarmer
     ? 'Records of your past orders and payouts (amounts and dates, without your name or contact details), because tax and accounting laws require them.'
-    : 'Records of your past orders and payments (amounts, dates, and items, without your name, phone, or address), because tax and accounting laws require them.';
+    : 'Records of your past orders and payments (amounts, dates, and items, without your name, phone, or address), because tax and accounting laws require them. If you used a free month, an unreadable scrambled version of your email and phone, so they can\'t get another one.';
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>

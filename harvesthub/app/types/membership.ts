@@ -34,6 +34,7 @@ export interface MembershipOverview {
   free_period_ends_at: string | null;
   free_period_active: boolean;
   free_period_available: boolean; // never used: they can tap Start free month
+  free_month_used_elsewhere?: boolean; // this email or phone already had one
   free_service_fee_min_subtotal: number;
   is_member: boolean; // has the benefits right now — paid, or the free period
   membership: Membership | null;

@@ -8,6 +8,7 @@ import { SearchBar } from './SearchBar';
 
 type Props = {
   addressCity: string | null;
+  onPressLocation?: () => void;
   searchValue: string;
   onSearchChange: (text: string) => void;
   cartItemCount: number;
@@ -19,7 +20,7 @@ type Props = {
 // sitting on the same page background as everything below it (no colored
 // hero block), so the page reads as one continuous surface. Everything else
 // on Home scrolls underneath.
-export function Header({ addressCity, searchValue, onSearchChange, cartItemCount, onPressCart, avatarInitial }: Props) {
+export function Header({ addressCity, onPressLocation, searchValue, onSearchChange, cartItemCount, onPressCart, avatarInitial }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -30,12 +31,20 @@ export function Header({ addressCity, searchValue, onSearchChange, cartItemCount
           <Logo size={36} />
           <View>
             <Text style={styles.brandText}>HarvestHub</Text>
-            <View style={styles.locationRow}>
+            <Pressable
+              style={styles.locationRow}
+              onPress={onPressLocation}
+              disabled={!onPressLocation}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityHint="Choose which saved place to see farms near"
+            >
               <MaterialIcons name="place" size={13} color={colors.primary} />
               <Text style={styles.locationText} numberOfLines={1}>
                 {addressCity ? `Near ${addressCity}` : 'Finding farms near you'}
               </Text>
-            </View>
+              {onPressLocation ? <MaterialIcons name="expand-more" size={15} color={colors.textMuted} /> : null}
+            </Pressable>
           </View>
         </View>
 

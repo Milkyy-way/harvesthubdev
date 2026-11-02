@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
+from app.customers.places import browse_point
 from app.customers.service import get_current_customer
 from app.products import service
 from app.products.schemas import ProductOut, HarvestPicksResponse
@@ -23,8 +24,9 @@ def read_harvest_picks(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
-    if customer.latitude is None or customer.longitude is None:
+    latitude, longitude = browse_point(db, customer)
+    if latitude is None or longitude is None:
         raise HTTPException(status_code=422, detail="Your delivery address couldn't be located yet")
 
-    items = service.get_harvest_picks(db, customer.latitude, customer.longitude, limit)
+    items = service.get_harvest_picks(db, latitude, longitude, limit)
     return {"items": items}

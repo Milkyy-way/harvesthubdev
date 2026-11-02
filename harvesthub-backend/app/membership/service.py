@@ -38,6 +38,7 @@ from app.core.pricing import (
     MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
     harvest_pass_plan_price,
 )
+from app.membership import free_month_guard
 from app.membership.models import FreePeriod, Membership, StripeCustomer
 from app.notifications import service as notifications
 from app.orders.models import Order, StoreOrder
@@ -57,6 +58,7 @@ BENEFIT_STATUSES = ("trialing", "active", "past_due")
 # not worth a Stripe trial measured in minutes.
 _MIN_TRIAL_LEFT = timedelta(hours=1)
 
+_FREE_MONTH_USED_ELSEWHERE = "This email or phone number has already had a free month."
 _SETUP_PURPOSE_JOIN = "harvest_pass"
 _SETUP_PURPOSE_CARD = "harvest_pass_card"
 
@@ -74,8 +76,12 @@ def live_membership(db: Session, customer_id) -> Membership | None:
 
 
 def free_month_available(db: Session, customer_id) -> bool:
-    """Never used it, and not already paying."""
-    return db.get(FreePeriod, customer_id) is None and live_membership(db, customer_id) is None
+    """Never used it, not already paying, and this email or phone hasn't had one."""
+    return (
+        db.get(FreePeriod, customer_id) is None
+        and live_membership(db, customer_id) is None
+        and not free_month_guard.already_used(db, customer_id)
+    )
 
 
 def start_free_month(db: Session, customer_id) -> dict:
@@ -83,6 +89,8 @@ def start_free_month(db: Session, customer_id) -> dict:
     period = db.get(FreePeriod, customer_id)
     if period is not None and not _free_period_active(period):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You've already used your free month.")
+    if period is None and free_month_guard.already_used(db, customer_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_FREE_MONTH_USED_ELSEWHERE)
     ensure_free_period(db, customer_id)
     return get_overview(db, customer_id)
 
@@ -101,6 +109,7 @@ def ensure_free_period(db: Session, customer_id) -> FreePeriod:
         .values(customer_id=customer_id, starts_at=now, ends_at=now + timedelta(days=HARVEST_PASS_FREE_DAYS), created_at=now)
         .on_conflict_do_nothing(index_elements=["customer_id"])
     )
+    free_month_guard.remember(db, customer_id)
     db.commit()
     return db.get(FreePeriod, customer_id)
 
@@ -279,7 +288,11 @@ def _trial_end(db: Session, customer_id, starting: bool) -> datetime | None:
     """Joining during the free period, or with it unused: nothing is charged
     until it ends. Only actually joining (starting) starts an unused one."""
     now = datetime.now(timezone.utc)
-    period = ensure_free_period(db, customer_id) if starting else db.get(FreePeriod, customer_id)
+    period = db.get(FreePeriod, customer_id)
+    if period is None and free_month_guard.already_used(db, customer_id):
+        return None  # this email or phone has had its free month: billed from today
+    if period is None and starting:
+        period = ensure_free_period(db, customer_id)
     ends_at = period.ends_at if period else now + timedelta(days=HARVEST_PASS_FREE_DAYS)
     return ends_at if ends_at - now >= _MIN_TRIAL_LEFT else None
 
@@ -517,13 +530,15 @@ def get_overview(db: Session, customer_id) -> dict:
     free_active = _free_period_active(period)
     membership = live_membership(db, customer_id)
     paid_benefits = membership is not None and membership.status in BENEFIT_STATUSES
+    used_elsewhere = period is None and membership is None and free_month_guard.already_used(db, customer_id)
     return {
         "monthly_price": HARVEST_PASS_MONTHLY_PRICE,
         "plans": plan_options(),
         "free_days": HARVEST_PASS_FREE_DAYS,
         "free_period_ends_at": _iso(period.ends_at) if period else None,
         "free_period_active": free_active,
-        "free_period_available": period is None and membership is None,
+        "free_period_available": period is None and membership is None and not used_elsewhere,
+        "free_month_used_elsewhere": used_elsewhere,
         "free_service_fee_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
         # Has the benefits right now — paid, or the free period.
         "is_member": paid_benefits or free_active,
@@ -533,6 +548,14 @@ def get_overview(db: Session, customer_id) -> dict:
 
 
 # --- Account deletion -------------------------------------------------------------------
+
+
+def remember_free_month_before_deletion(db: Session, profile_id) -> None:
+    """Deleting an account deletes its free-month row, so an email or phone that
+    had one goes on the list first. Whoever never used it isn't kept."""
+    if db.get(FreePeriod, profile_id) is not None:
+        free_month_guard.remember(db, profile_id)
+        db.commit()
 
 
 def release_billing_for_deletion(db: Session, profile_id) -> None:

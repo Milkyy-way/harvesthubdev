@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
+from app.customers.places import browse_point
 from app.customers.service import get_current_customer
 from app.farmers import service
 from app.farmers.schemas import FarmerFeedResponse, FarmerDetailOut, FarmerSpotlightResponse
@@ -16,11 +17,12 @@ def read_farmer_feed(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
-    if customer.latitude is None or customer.longitude is None:
+    latitude, longitude = browse_point(db, customer)
+    if latitude is None or longitude is None:
         raise HTTPException(status_code=422, detail="Your delivery address couldn't be located yet")
 
     items, total = service.list_farmer_feed(
-        db, customer.latitude, customer.longitude, category, search, limit, offset
+        db, latitude, longitude, category, search, limit, offset
     )
     return {"items": items, "limit": limit, "offset": offset, "total": total}
 
@@ -32,10 +34,11 @@ def read_farmer_spotlight(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
-    if customer.latitude is None or customer.longitude is None:
+    latitude, longitude = browse_point(db, customer)
+    if latitude is None or longitude is None:
         raise HTTPException(status_code=422, detail="Your delivery address couldn't be located yet")
 
-    items = service.get_spotlight_farmers(db, customer.latitude, customer.longitude, limit)
+    items = service.get_spotlight_farmers(db, latitude, longitude, limit)
     return {"items": items}
 
 
@@ -47,7 +50,8 @@ def read_farmer_detail(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
-    detail = service.get_farmer_detail(db, farmer_id, customer.latitude, customer.longitude)
+    latitude, longitude = browse_point(db, customer)
+    detail = service.get_farmer_detail(db, farmer_id, latitude, longitude)
     if detail is None:
         raise HTTPException(status_code=404, detail="Farm not found")
     return detail

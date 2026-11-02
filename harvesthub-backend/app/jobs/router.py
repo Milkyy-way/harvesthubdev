@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.customers import places as customer_places
 from app.customers import service as customers_service
 from app.deals import closing as deals_closing
 from app.delivery import service as delivery_service
@@ -30,6 +31,7 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         **deals_closing.run(db),
         # Google's coordinates may only be kept 30 days (app/core/geocoding.py).
         "homes_regeocoded": customers_service.refresh_stale_locations(db),
+        "places_regeocoded": customer_places.refresh_stale(db),
         "farms_regeocoded": farmers_service.refresh_stale_locations(db),
         # Photos of customers' doorsteps are only kept 30 days.
         "delivery_photos_deleted": delivery_service.purge_old_photos(db),

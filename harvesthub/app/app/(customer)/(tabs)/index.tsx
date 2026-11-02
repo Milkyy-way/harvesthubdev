@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -13,6 +13,7 @@ import { HarvestPassBanner } from '../../../components/customer/HarvestPassBanne
 import { HarvestPassWelcome } from '../../../components/customer/HarvestPassWelcome';
 import { PodsHomeCard } from '../../../components/customer/PodsHomeCard';
 import { DealsHomeRail } from '../../../components/customer/DealsHomeRail';
+import { PlacePicker } from '../../../components/customer/PlacePicker';
 import { FarmerSpotlightRail } from '../../../components/customer/FarmerSpotlightRail';
 import { HarvestPicksRail } from '../../../components/customer/HarvestPicksRail';
 import { CategoryRail } from '../../../components/customer/CategoryRail';
@@ -29,6 +30,7 @@ import type { DashboardSummary } from '../../../types/dashboard';
 import type { MembershipOverview } from '../../../types/membership';
 import type { PodSummary } from '../../../types/pods';
 import type { CustomerDealCard } from '../../../types/deals';
+import type { PlacesOverview } from '../../../types/places';
 
 const PAGE_SIZE = 20;
 
@@ -55,6 +57,11 @@ export default function CustomerHome() {
   const [membership, setMembership] = useState<MembershipOverview | null>(null);
   const [pods, setPods] = useState<PodSummary[] | null>(null);
   const [deals, setDeals] = useState<CustomerDealCard[]>([]);
+  const [places, setPlaces] = useState<PlacesOverview | null>(null);
+  const [pickingPlace, setPickingPlace] = useState(false);
+  // undefined until first loaded, so the first load doesn't count as a switch.
+  const browsingFrom = useRef<string | null | undefined>(undefined);
+  const placesChanged = useRef<(next: PlacesOverview) => void>(() => {});
 
   const avatarInitial = (profile?.full_name?.trim()?.[0] ?? 'H').toUpperCase();
 
@@ -109,6 +116,11 @@ export default function CustomerHome() {
         (res) => setDeals(res.data.deals),
         (err) => console.warn('Could not load group deals:', err)
       );
+      // Adding a place switches to it, on another screen.
+      apiClient.get<PlacesOverview>('/customers/me/places').then(
+        (res) => placesChanged.current(res.data),
+        (err) => console.warn('Could not load saved places:', err)
+      );
     }, [])
   );
 
@@ -146,6 +158,21 @@ export default function CustomerHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, debouncedSearch]);
 
+  const applyPlaces = (next: PlacesOverview) => {
+    setPlaces(next);
+    const switched = browsingFrom.current !== undefined && browsingFrom.current !== next.active_place_id;
+    browsingFrom.current = next.active_place_id;
+    if (switched) {
+      fetchPage(0, true);
+      loadExtras();
+      apiClient.get<{ deals: CustomerDealCard[] }>('/deals').then(
+        (res) => setDeals(res.data.deals),
+        (err) => console.warn('Could not load group deals:', err)
+      );
+    }
+  };
+  placesChanged.current = applyPlaces;
+
   const handleRefresh = () => {
     setRefreshing(true);
     fetchPage(0, true);
@@ -163,7 +190,8 @@ export default function CustomerHome() {
   // browse sections (savings, spotlights, harvest) step aside so the results
   // sit right under the search.
   const filtering = Boolean(selectedCategory || trimmedSearch);
-  const city = customerProfile?.address_city;
+  const activePlace = places?.places.find((p) => p.id === places.active_place_id) ?? null;
+  const city = activePlace?.name ?? customerProfile?.address_city;
 
   const emptyMessage = error
     ? error
@@ -190,9 +218,11 @@ export default function CustomerHome() {
   return (
     <View style={styles.container}>
       <HarvestPassWelcome overview={membership} onChanged={setMembership} />
+      <PlacePicker visible={pickingPlace} overview={places} onClose={() => setPickingPlace(false)} onChanged={applyPlaces} />
       <StatusBar style="dark" />
       <Header
         addressCity={city ?? null}
+        onPressLocation={places ? () => setPickingPlace(true) : undefined}
         searchValue={searchText}
         onSearchChange={setSearchText}
         cartItemCount={cartItemCount}

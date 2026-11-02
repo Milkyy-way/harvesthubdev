@@ -11,6 +11,7 @@ export default function CustomerLayout() {
         <Stack.Screen name="checkout" />
         <Stack.Screen name="orders/[id]" />
         <Stack.Screen name="edit-profile" />
+        <Stack.Screen name="add-place" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="help" />

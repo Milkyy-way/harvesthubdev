@@ -43,6 +43,8 @@ def delete_my_account(db: Session = Depends(get_db), user=Depends(get_current_us
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Account deletion isn't available right now. Please contact support.",
         )
+    # Before anything's gone: an email or phone that had a free month stays on the list.
+    membership_service.remember_free_month_before_deletion(db, user["id"])
     # Harvest Pass first: deleting the Stripe customer ends the subscription
     # immediately, so a deleted account is never billed again.
     try:

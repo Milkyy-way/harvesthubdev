@@ -203,6 +203,13 @@ function JoinView({
             Your free month ended {formatLongDate(freeEnded)}. Join to keep skipping the service fee.
           </Text>
         </View>
+      ) : overview.free_month_used_elsewhere ? (
+        <View style={styles.freeBanner}>
+          <MaterialIcons name="info-outline" size={20} color={colors.primaryDark} />
+          <Text style={styles.freeBannerText}>
+            This email or phone number has already had a free month, so plans start today. If that&apos;s not right, please contact support.
+          </Text>
+        </View>
       ) : null}
 
       <Text style={styles.sectionTitle}>What you get</Text>
