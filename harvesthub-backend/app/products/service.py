@@ -4,7 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.models import Profile
-from app.core.geo import haversine_km
+from app.core.geo import MAX_BROWSE_KM, haversine_km
 from app.categories.models import Category
 from app.products.models import Product
 from app.cart.models import CartItem
@@ -101,7 +101,8 @@ def get_harvest_picks(db: Session, customer_lat: float, customer_lon: float, lim
             if farmer is None or farmer.latitude is None:
                 continue
         distance = haversine_km(customer_lat, customer_lon, farmer.latitude, farmer.longitude)
-        with_distance.append((farmer, distance))
+        if distance <= MAX_BROWSE_KM:
+            with_distance.append((farmer, distance))
 
     with_distance.sort(key=lambda fd: fd[1])
     candidates = with_distance[:_HARVEST_CANDIDATE_FARMER_COUNT]

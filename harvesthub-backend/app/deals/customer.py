@@ -16,7 +16,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.geo import haversine_km
+from app.core.geo import KM_PER_MILE, MAX_BROWSE_MILES, haversine_km
 from app.core.localtime import LOCAL_TZ
 from app.core.pricing import MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL, SERVICE_FEE_RATE
 from app.core.tax import compute_item_tax
@@ -56,8 +56,7 @@ logger = logging.getLogger(__name__)
 WITHDRAW_LOCK = timedelta(hours=12)
 JOIN_PURPOSE = "group_deal_join"
 # Far enough for a pickup trip. A deal further away than this isn't listed.
-MAX_LISTING_MILES = 50
-KM_PER_MILE = 1.609344
+MAX_LISTING_MILES = MAX_BROWSE_MILES
 # A finished deal stays on the customer's list this long, so they can see how it went.
 _RESULT_DAYS = 7
 _MILESTONES = ((1.0, "goal"), (0.8, "80"), (0.5, "50"))

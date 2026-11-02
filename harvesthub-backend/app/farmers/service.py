@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.geo import haversine_km
+from app.core.geo import MAX_BROWSE_KM, haversine_km
 from app.core.geocoding import REFRESH_AFTER, geocode_address, needs_geocode
 from app.core.models import Profile
 from app.farmers.models import FarmerProfile, FarmerCertification
@@ -25,8 +25,8 @@ _SPOTLIGHT_PROXIMITY_WEIGHT = 0.4
 # distance ends up doing most of the ranking work until real ratings
 # accumulate.
 _SPOTLIGHT_NEUTRAL_RATING = 3.5
-# Smooths proximity into a 0-1 score with no hard cutoff radius — a farm
-# 10km away still gets half credit rather than being excluded outright.
+# Smooths proximity into a 0-1 score, inside MAX_BROWSE_KM — a farm 10km
+# away still gets half credit rather than being excluded outright.
 _SPOTLIGHT_PROXIMITY_DECAY_KM = 10.0
 
 
@@ -161,6 +161,8 @@ def list_farmer_feed(
             continue  # still ungeocoded (bad address / API down) — exclude, don't crash the feed
 
         distance = haversine_km(customer_lat, customer_lon, farmer.latitude, farmer.longitude)
+        if distance > MAX_BROWSE_KM:
+            continue
 
         if category:
             matched = [category]
@@ -209,6 +211,8 @@ def get_spotlight_farmers(
             continue
 
         distance = haversine_km(customer_lat, customer_lon, farmer.latitude, farmer.longitude)
+        if distance > MAX_BROWSE_KM:
+            continue
         avg_rating, rating_count = summaries.get(farmer.id, (None, 0))
 
         rating_score = ((avg_rating if avg_rating is not None else _SPOTLIGHT_NEUTRAL_RATING) - 1) / 4
