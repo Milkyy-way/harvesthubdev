@@ -42,6 +42,10 @@ def create_refund(payment_intent_id: str, amount: float, reason: str | None = No
     return stripe.Refund.create(**params)
 
 
+def retrieve_refund(refund_id: str) -> stripe.Refund:
+    return stripe.Refund.retrieve(refund_id)
+
+
 def construct_webhook_event(payload: bytes, sig_header: str) -> stripe.Event:
     return stripe.Webhook.construct_event(payload, sig_header, settings.STRIPE_WEBHOOK_SECRET)
 

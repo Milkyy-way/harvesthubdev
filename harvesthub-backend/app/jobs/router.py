@@ -11,6 +11,7 @@ from app.deals import closing as deals_closing
 from app.delivery import service as delivery_service
 from app.farmers import service as farmers_service
 from app.notifications import jobs as notification_jobs
+from app.orders import service as orders_service
 from app.pods import service as pods_service
 
 # Periodic work, run by Cloud Scheduler every 15 minutes (LAUNCH_ANDROID.md
@@ -29,6 +30,8 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         **pods_service.run_jobs(db),
         # Group deals: opening to members, then everyone; charging at the deadline.
         **deals_closing.run(db),
+        # Refunds Stripe didn't finish at once: how they ended.
+        "refunds_settled": orders_service.sync_pending_refunds(db),
         # Google's coordinates may only be kept 30 days (app/core/geocoding.py).
         "homes_regeocoded": customers_service.refresh_stale_locations(db),
         "places_regeocoded": customer_places.refresh_stale(db),

@@ -172,6 +172,14 @@ export default function CartScreen() {
         keyExtractor={(farm) => farm.farmer_id}
         style={styles.list}
         contentContainerStyle={cart?.farms.length ? styles.listContent : styles.emptyContent}
+        ListHeaderComponent={
+          cart && cart.farms.length > 1 ? (
+            <MultiFarmNote
+              farmCount={cart.farms.length}
+              deliveryCount={cart.farms.filter((f) => fulfillmentByFarm[f.farmer_id]?.method === 'delivery').length}
+            />
+          ) : null
+        }
         renderItem={({ item: farm }) => (
           <CartFarmSection
             group={farm}
@@ -232,6 +240,24 @@ export default function CartScreen() {
   );
 }
 
+// Each farm is its own order, so buying from several means several pickups or
+// delivery fees. The customer still decides.
+function MultiFarmNote({ farmCount, deliveryCount }: { farmCount: number; deliveryCount: number }) {
+  return (
+    <View style={styles.note}>
+      <MaterialIcons name="local-shipping" size={18} color={colors.primaryDark} />
+      <View style={styles.noteText}>
+        <Text style={styles.noteTitle}>Ordering from {farmCount} farms</Text>
+        <Text style={styles.noteBody}>
+          Each farm packs and sends its own order, so each one is a separate pickup or delivery, with its own delivery
+          fee. Getting more from one farm can save you trips and fees.
+          {deliveryCount > 1 ? ` Right now you'd pay ${deliveryCount} delivery fees.` : ''}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function optimisticUpdate(cart: CartSummary | null, farmerId: string, productId: string, quantity: number): CartSummary | null {
   if (!cart) return cart;
   const farms = cart.farms
@@ -269,6 +295,18 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   listContent: { paddingTop: spacing.sm, paddingBottom: spacing.xl },
   emptyContent: { flexGrow: 1 },
+  note: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xs,
+    padding: spacing.md,
+    backgroundColor: colors.tint,
+    borderRadius: radius.md,
+  },
+  noteText: { flex: 1 },
+  noteTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  noteBody: { fontSize: 13, lineHeight: 19, color: colors.text, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.sm },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
   footer: {

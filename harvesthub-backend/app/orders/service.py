@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,8 @@ from app.customers.models import CustomerProfile
 from app.membership import service as membership_service
 from app.pods.models import Pod
 
+logger = logging.getLogger(__name__)
+
 # Terminal from the customer's point of view — no further payment action
 # will change these without a new attempt (we don't build retries yet).
 _TERMINAL_PAYMENT_STATUSES = ("succeeded", "canceled", "failed")
@@ -36,12 +39,12 @@ _TERMINAL_PAYMENT_STATUSES = ("succeeded", "canceled", "failed")
 #   cash pickup:   pending_payment ---------> ready_for_pickup -> completed
 #   card delivery: pending_payment -> paid -> out_for_delivery -> completed
 # (delivery is card only; the farmer's run moves it along — app/delivery/)
-# 'completed' is cancellable/refundable too (e.g. a quality complaint after
-# pickup) — this is what makes the farmer-payout ledger's refund-before/
-# after-payout branch reachable at all, since a ledger entry is only ever
-# created at completion (see app/payouts/service.py). No time limit on this
-# post-completion refund window yet — a known simplification.
-_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_pickup", "completed")
+# What a customer can cancel. Not 'completed' (2026-11-07): Cancel Whole Order
+# used to refund farms already picked up, and the API allowed refunding any
+# finished order with no time limit. A refund after pickup is for HarvestHub to
+# make by hand; the ledger's refund-after-payout branch
+# (app/payouts/service.py) is kept for that.
+_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_pickup")
 # Statuses whose cancellation needs a refund (a no-op for cash, which never
 # captured money online) + a farmer ledger adjustment, and whose stock has
 # definitely been taken — as opposed to 'pending_payment'.
@@ -53,6 +56,7 @@ _FARMER_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_fo
 # _CANCELLABLE_STORE_ORDER_STATUSES); they're told why.
 _ON_ITS_WAY = "This order is already on its way, so it can't be cancelled now."
 _POD_ORDERS_CLOSED = "Orders for this delivery have closed, so it can't be cancelled now."
+_ALREADY_RECEIVED = "You've already received this order, so it can't be cancelled. If something was wrong with it, please contact support."
 _DEAL_ORDER_LOCKED = "A group deal order can't be cancelled once the deal has closed. If the farm can't fill it, you'll be refunded in full."
 # A Neighborhood Pod order saves a card, and is charged at the farm's cutoff
 # (app/pods/charging.py).
@@ -618,6 +622,40 @@ def _refund_store_order(db: Session, payment: Payment, store_order: StoreOrder, 
     )
 
 
+# How Stripe's refund statuses end up in ours (0013 allows pending, succeeded, failed).
+_FINAL_REFUND_STATUSES = {"succeeded": "succeeded", "failed": "failed", "canceled": "failed"}
+
+
+def sync_pending_refunds(db: Session, limit: int = 50) -> int:
+    """Scheduled job: a refund Stripe didn't finish at once is saved as
+    'pending' (_refund_store_order), so ask Stripe how it ended. A failed one
+    means the money didn't go back: it's logged, and shows in the refunds query
+    for HarvestHub to refund by hand. Returns how many changed."""
+    pending = (
+        db.query(Refund)
+        .filter(Refund.status == "pending", Refund.stripe_refund_id.isnot(None))
+        .order_by(Refund.created_at)
+        .limit(limit)
+        .all()
+    )
+    changed = 0
+    for refund in pending:
+        try:
+            stripe_status = stripe_client.retrieve_refund(refund.stripe_refund_id).status
+        except stripe.error.StripeError as e:
+            logger.warning("Could not check refund %s: %s", refund.stripe_refund_id, e)
+            continue
+        final = _FINAL_REFUND_STATUSES.get(stripe_status)
+        if final is None:
+            continue  # still on its way
+        refund.status = final
+        changed += 1
+        if final == "failed":
+            logger.error("Refund %s of $%s for store order %s %s", refund.stripe_refund_id, refund.amount, refund.store_order_id, stripe_status)
+    db.commit()
+    return changed
+
+
 def cancel_store_order(
     db: Session, customer_id: str, order_id: str, store_order_id: str, cancelled_by_role: str, cancelled_by, reason: str | None
 ) -> dict:
@@ -631,6 +669,8 @@ def cancel_store_order(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
     if store_order.group_deal_id and store_order.status != "cancelled":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
+    if store_order.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ALREADY_RECEIVED)
     if store_order.status not in _CANCELLABLE_STORE_ORDER_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
