@@ -13,6 +13,7 @@ from app.farmers.models import FarmerProfile, FarmerCertification
 from app.products.models import Product
 from app.categories.models import Category
 from app.ratings import service as ratings_service
+from app.promotions import service as promotions_service
 
 # Spotlight ranking weights — a placeholder blend, not a researched
 # formula: rating matters slightly more than raw proximity (a spotlight is
@@ -283,4 +284,5 @@ def get_farmer_detail(
         "certifications": [
             {"cert_type": c.cert_type, "cert_name": c.cert_name} for c in certifications
         ],
+        "promotions": promotions_service.visible_on_farm_page(db, farmer.id),
     }

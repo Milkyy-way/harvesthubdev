@@ -228,7 +228,7 @@ def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) ->
         .all()
     )
     for so in store_orders:
-        promotions_service.record_promo_use(db, so.farmer_id, so.promo_code)
+        promotions_service.record_promo_use(db, so.farmer_id, so.promo_code, customer_id, order_id)
         items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id).all()
         for item in items:
             if item.product_id:
@@ -555,7 +555,7 @@ def _stock_was_taken(payment: Payment | None, store_order: StoreOrder) -> bool:
 def _restore_stock_and_promo(db: Session, store_order: StoreOrder) -> None:
     """Undoes _commit_inventory_and_clear_cart for one cancelled store order:
     the stock goes back and the promo code gets its use back."""
-    promotions_service.release_promo_use(db, store_order.farmer_id, store_order.promo_code)
+    promotions_service.release_promo_use(db, store_order.farmer_id, store_order.promo_code, store_order.order_id)
     items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == store_order.id).all()
     for item in items:
         if item.product_id:

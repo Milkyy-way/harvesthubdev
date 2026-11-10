@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional
 
+from app.promotions.schemas import FarmPromoOut
+
 class FarmerFeedCard(BaseModel):
     id: str
     farm_name: str
@@ -42,3 +44,5 @@ class FarmerDetailOut(BaseModel):
     average_rating: Optional[float]
     rating_count: int
     certifications: list[CertificationOut]
+    # Promo codes the farm chose to show, that work right now.
+    promotions: list[FarmPromoOut] = []

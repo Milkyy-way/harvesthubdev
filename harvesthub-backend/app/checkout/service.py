@@ -92,7 +92,7 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
         items = sorted(items_by_farmer.get(group.farmer_id, []), key=lambda i: i["name"])
         subtotal = round(sum(i["line_total"] for i in items), 2)
 
-        discount, applied_code, promo_error = apply_promo(db, group.farmer_id, group.promo_code, subtotal)
+        discount, applied_code, promo_error = apply_promo(db, group.farmer_id, group.promo_code, subtotal, customer_id)
 
         # Delivery: the farm's own fee (it keeps all of it), to the customer's
         # saved address, in a window the farm still takes orders for.

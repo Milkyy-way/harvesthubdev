@@ -44,9 +44,10 @@ def harvest_pass_plan_price(plan: str) -> tuple[int, float, float]:
     return months, per_month, round(per_month * months, 2)
 
 
-# Farmer payout commission — flat 12% of (subtotal - promo_discount) at the
+# Farmer payout commission — flat 10% of (subtotal - promo_discount) at the
 # time a store order is marked completed (see app/payouts/service.py). Never
-# on a delivery fee: the farm keeps that in full.
+# on a delivery fee: the farm keeps that in full. Was 12% until 2026-11-09
+# (lowered by the user).
 # Snapshotted onto each farmer_ledger_entries row at creation time, so a
 # future rate change here never retroactively alters historical entries.
-FARMER_COMMISSION_RATE = 0.12
+FARMER_COMMISSION_RATE = 0.10

@@ -42,9 +42,10 @@ cross join (values
 where f.farm_name in ('FARM A NAME HERE', 'FARM B NAME HERE', 'FARM C NAME HERE')
 on conflict (farmer_id, code) do nothing;
 
--- 1.5 Check the promo codes, and how often each has been used.
-select f.farm_name, c.code, c.discount_type, c.discount_value, c.min_order_amount,
-       c.usage_limit, c.times_used, c.expires_at, c.is_active
+-- 1.5 Check the promo codes, and how often each has been used. Farmers make
+-- their own in the app too (Account, then Promo codes).
+select f.farm_name, c.code, c.discount_type, c.discount_value, c.min_order_amount, c.max_discount_amount,
+       c.usage_limit, c.times_used, c.once_per_customer, c.show_on_farm_page, c.expires_at, c.is_active
 from promo_codes c
 join farmer_profiles f on f.id = c.farmer_id
 order by f.farm_name, c.code;
@@ -73,6 +74,7 @@ select * from categories limit 50;
 select * from products order by created_at desc limit 50;
 select * from cart_items order by created_at desc limit 50;
 select * from promo_codes order by created_at desc limit 50;
+select * from promo_code_uses order by created_at desc limit 50;
 select * from farm_follows order by created_at desc limit 50;
 
 -- Orders and money
@@ -311,6 +313,14 @@ from harvest_pass_free_periods f
 full join memberships m on m.customer_id = f.customer_id
 left join auth.users u on u.id = coalesce(f.customer_id, m.customer_id)
 order by f.starts_at desc nulls last;
+
+-- 4.13 Who used which promo code, newest first. A cancelled order gives its use back.
+select x.created_at, f.farm_name, c.code, u.email as customer, x.order_id
+from promo_code_uses x
+join promo_codes c on c.id = x.promo_code_id
+join farmer_profiles f on f.id = c.farmer_id
+left join auth.users u on u.id = x.customer_id
+order by x.created_at desc;
 
 
 -- =====================================================================

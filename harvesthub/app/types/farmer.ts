@@ -149,3 +149,29 @@ export interface FarmerEarnings {
   lifetime_paid_out: number;
   payouts: FarmerPayout[];
 }
+
+// The Promo codes screen — FarmerPromoCodeOut/In (harvesthub-backend/app/promotions/schemas.py).
+export type FarmerPromoStatus = 'active' | 'paused' | 'scheduled' | 'ended' | 'used_up';
+
+export interface FarmerPromoCode {
+  id: string;
+  code: string;
+  headline: string;
+  details: string[];
+  usage_limit: number | null;
+  times_used: number;
+  show_on_farm_page: boolean;
+  status: FarmerPromoStatus;
+}
+
+export interface FarmerPromoCodeInput {
+  code: string;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  min_order_amount: number | null;
+  max_discount_amount: number | null;
+  usage_limit: number | null;
+  once_per_customer: boolean;
+  show_on_farm_page: boolean;
+  duration_days: number | null; // 7, 14, 30 or 90; null = no end date
+}

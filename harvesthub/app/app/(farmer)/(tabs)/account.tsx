@@ -83,6 +83,12 @@ export default function FarmerAccount() {
               caption="Fee, distance and delivery times"
               onPress={() => router.push('/(farmer)/delivery-settings')}
             />
+            <SettingsRow
+              icon="local-offer"
+              label="Promo codes"
+              caption="Discounts for your customers, on your farm page"
+              onPress={() => router.push('/(farmer)/promo-codes')}
+            />
           </>
         ) : null}
         <SettingsRow

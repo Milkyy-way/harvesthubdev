@@ -7,6 +7,7 @@ import { apiClient } from '../../../lib/apiClient';
 import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { FarmerDetailHeader } from '../../../components/customer/FarmerDetailHeader';
 import { FarmDealsRow } from '../../../components/customer/FarmDealsRow';
+import { FarmPromoBanner } from '../../../components/customer/FarmPromoBanner';
 import { CategoryRail } from '../../../components/customer/CategoryRail';
 import { SearchBar } from '../../../components/customer/SearchBar';
 import { ProductCard } from '../../../components/customer/ProductCard';
@@ -190,6 +191,7 @@ export default function FarmerDetailScreen() {
         ListHeaderComponent={
           <>
             <FarmerDetailHeader farmer={farmer} />
+            <FarmPromoBanner promotions={farmer.promotions} />
             <FarmDealsRow farmerId={farmer.id} />
             <SearchBar value={searchText} onChangeText={setSearchText} placeholder="Search this farm's products" />
             <View style={styles.toolsRow}>

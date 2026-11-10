@@ -14,6 +14,7 @@ from app.farmer_products.router import router as farmer_products_router
 from app.farmer_orders.router import router as farmer_orders_router
 from app.farmer_earnings.router import router as farmer_earnings_router
 from app.farmer_ratings.router import router as farmer_ratings_router
+from app.promotions.router import router as farmer_promo_codes_router
 from app.legal.router import router as legal_router
 from app.membership.router import router as membership_router
 from app.notifications.router import router as notifications_router
@@ -55,6 +56,7 @@ app.include_router(farmer_products_router, prefix="/api/v1")
 app.include_router(farmer_orders_router, prefix="/api/v1")
 app.include_router(farmer_earnings_router, prefix="/api/v1")
 app.include_router(farmer_ratings_router, prefix="/api/v1")
+app.include_router(farmer_promo_codes_router, prefix="/api/v1")
 app.include_router(membership_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(addresses_router, prefix="/api/v1")

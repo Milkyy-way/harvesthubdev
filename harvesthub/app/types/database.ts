@@ -189,6 +189,14 @@ export interface FarmerDetail {
   farm_types: FarmType[];
   years_in_operation: number | null;
   certifications: PublicCertification[];
+  promotions?: FarmPromo[]; // codes the farm chose to show, that work now
+}
+
+// A code on the farm page — FarmPromoOut (harvesthub-backend/app/promotions/schemas.py).
+export interface FarmPromo {
+  code: string;
+  headline: string; // "10% off, up to $8"
+  details: string[]; // ["On orders of $20 or more", "Ends Nov 30"]
 }
 
 // Matches ProductOut (harvesthub-backend/app/products/schemas.py) —
