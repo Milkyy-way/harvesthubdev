@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
 from app.core.localtime import LOCAL_TZ  # dates are shown in US Eastern
+from app.core.pricing import MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL
 
 PUSH, EMAIL, SMS = "push", "email", "sms"
 
@@ -23,6 +24,11 @@ class Message:
     email_paragraphs: list[str] = field(default_factory=list)  # plain text, escaped when rendered
     email_rows: list[tuple[str, str]] = field(default_factory=list)  # label/value table, e.g. a receipt
     sms: str | None = None
+
+
+def _days(n) -> str:
+    n = int(n or 5)
+    return "1 day" if n == 1 else f"{n} days"
 
 
 def _money(amount) -> str:
@@ -189,28 +195,36 @@ def delivered(ctx: dict) -> Message:
 
 
 def free_period_ending(ctx: dict) -> Message:
-    """ctx: ends_at, joined (bool), first_charge (amount, when joined)."""
+    """ctx: ends_at, joined (bool), first_charge (amount, when joined), in_pod,
+    saved (what Harvest Pass has saved so far), last_day (the second reminder)."""
     when = _date(ctx["ends_at"])
+    saved = float(ctx.get("saved") or 0)
+    so_far = f"You've saved {_money(saved)} with it so far. " if saved > 0 else ""
     if ctx.get("joined"):
         return Message(
-            title="Your Harvest Pass continues soon",
-            body=f"Your free month ends {when}. Your plan starts then — {_money(ctx.get('first_charge'))}.",
+            title=f"Your Harvest Pass plan starts {when}" if ctx.get("last_day") else "Your Harvest Pass continues soon",
+            body=f"{so_far}Your free month ends {when}, and your plan starts then: {_money(ctx.get('first_charge'))}.",
             channels=(PUSH, EMAIL),
             url="/(customer)/harvest-pass",
             email_paragraphs=[
                 f"Your free month of Harvest Pass ends on {when}.",
+                *([f"So far it has saved you {_money(saved)} in service fees."] if saved > 0 else []),
                 f"You've already chosen a plan, so it simply continues: {_money(ctx.get('first_charge'))} "
                 f"will be charged to your card on {when}.",
                 "Changed your mind? Cancel any time before then in the app (Account → Harvest Pass) and you won't be charged.",
             ],
         )
     return Message(
-        title="Your free Harvest Pass ends soon",
-        body=f"Your free month ends {when}. Join to keep skipping service fees.",
+        title="Last day of your free Harvest Pass"
+        if ctx.get("last_day")
+        else f"Your free Harvest Pass ends in {_days(ctx.get('days_left'))}",
+        body=f"{so_far}Join before {when} to keep skipping the service fee"
+        + (" and keep your pod." if ctx.get("in_pod") else f" on ${MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL:.0f}+ orders."),
         channels=(PUSH, EMAIL),
         url="/(customer)/harvest-pass",
         email_paragraphs=[
             f"Your free month of Harvest Pass ends on {when}.",
+            *([f"So far it has saved you {_money(saved)} in service fees."] if saved > 0 else []),
             "To keep skipping the service fee on your orders, join Harvest Pass in the app (Account → Harvest Pass) "
             "before then. Nothing is charged until your free month is over.",
             *(

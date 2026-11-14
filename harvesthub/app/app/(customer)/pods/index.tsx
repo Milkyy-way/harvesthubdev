@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
-import { useRouter, type Href } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -17,6 +17,7 @@ import type { MembershipOverview } from '../../../types/membership';
 // can't reach the app until it's installed).
 export default function PodsScreen() {
   const router = useRouter();
+  const joining = useLocalSearchParams<{ join?: string }>().join === '1';
   const insets = useSafeAreaInsets();
   const [pods, setPods] = useState<PodSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +54,35 @@ export default function PodsScreen() {
 
   const cleanCode = code.trim().toUpperCase();
 
+  const inviteSection = (
+    <Section title="Got an invite?" caption="Enter the 8-character code your neighbor sent you.">
+      <View style={styles.codeRow}>
+        <View style={styles.flex1}>
+          <TextField
+            value={code}
+            onChangeText={setCode}
+            placeholder="Invite code"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            autoFocus={joining}
+            accessibilityLabel="Invite code"
+            maxLength={8}
+          />
+        </View>
+        <Pressable
+          style={[styles.codeButton, cleanCode.length !== 8 && styles.disabled]}
+          disabled={cleanCode.length !== 8}
+          onPress={() => {
+            setCode('');
+            router.push(`/(customer)/invite/${cleanCode}` as Href);
+          }}
+        >
+          <Text style={styles.codeButtonText}>Open</Text>
+        </Pressable>
+      </View>
+    </Section>
+  );
+
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
@@ -72,6 +102,9 @@ export default function PodsScreen() {
           A pod is 3 to 8 nearby Harvest Pass members with one drop point and one delivery day. Everyone orders and pays on
           their own, and each farm&apos;s delivery fee is split evenly among those who order.
         </Text>
+
+        {/* Came from Home's "Join with a code": the code box first, ready to type. */}
+        {joining ? inviteSection : null}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {!pods && !error ? <ActivityIndicator color={colors.primary} style={styles.loading} /> : null}
@@ -137,30 +170,7 @@ export default function PodsScreen() {
           </Pressable>
         ) : null}
 
-        <Section title="Got an invite?" caption="Enter the 8-character code your neighbor sent you.">
-          <View style={styles.codeRow}>
-            <View style={styles.flex1}>
-              <TextField
-                value={code}
-                onChangeText={setCode}
-                placeholder="Invite code"
-                autoCapitalize="characters"
-                autoCorrect={false}
-                maxLength={8}
-              />
-            </View>
-            <Pressable
-              style={[styles.codeButton, cleanCode.length !== 8 && styles.disabled]}
-              disabled={cleanCode.length !== 8}
-              onPress={() => {
-                setCode('');
-                router.push(`/(customer)/invite/${cleanCode}` as Href);
-              }}
-            >
-              <Text style={styles.codeButtonText}>Open</Text>
-            </Pressable>
-          </View>
-        </Section>
+        {!joining ? inviteSection : null}
       </ScrollView>
     </View>
   );

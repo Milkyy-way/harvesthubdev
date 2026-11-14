@@ -127,7 +127,22 @@ class CategorySpendOut(BaseModel):
     color_slot: Optional[int]  # fixed chart color for an all-time top category; null = "Other"
 
 
+class PeriodTotalsOut(BaseModel):
+    start: str  # the previous period's first day, YYYY-MM-DD
+    orders_total: int
+    spending: float
+    savings: float
+
+
 class DashboardSummaryOut(BaseModel):
+    # The calendar period asked for ('month' | 'year'), with its first day and
+    # the next period's first day (local time, YYYY-MM-DD); 'all' or None
+    # otherwise. `previous` is the period before, for "+2 vs October".
+    period: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    previous: Optional[PeriodTotalsOut] = None
+    first_order_on: Optional[str] = None  # how far back the arrows go
     orders_total: int
     orders_active: int
     orders_completed: int

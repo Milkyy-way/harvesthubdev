@@ -1,5 +1,5 @@
 """Notifications nothing in the API triggers directly, found by looking:
-  * the free Harvest Pass period ending in the next 3 days, or just ended;
+  * the free Harvest Pass period ending: 5 days before, its last day, and just ended;
   * a farmer application approved or rejected (done in Supabase Studio);
   * a payout marked paid (also done in Studio).
 
@@ -10,6 +10,9 @@ times: every notice has a dedupe key, so each event is sent once.
 Look-back windows are short on purpose — the first run after deploying
 mustn't message people about things that happened weeks ago.
 """
+import math
+from datetime import datetime, timezone
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -31,14 +34,24 @@ def run(db: Session) -> dict:
 
 
 def _free_period_ending(db: Session) -> int:
+    """Two reminders before the free month ends: about 5 days before, and on
+    its last day, each with what Harvest Pass has saved them so far. Each has
+    its own dedupe key, so each is sent once. Someone first seen inside the
+    last day (a deploy, a late job) gets only the last-day one."""
+    return _free_period_reminder(db, "free_period_ending", "interval '1 day'", "interval '5 days'", last_day=False) + _free_period_reminder(
+        db, "free_period_last_day", "interval '0 days'", "interval '1 day'", last_day=True
+    )
+
+
+def _free_period_reminder(db: Session, key: str, after: str, until: str, last_day: bool) -> int:
     rows = db.execute(
         text(
             f"""
             select fp.customer_id, fp.ends_at
             from harvest_pass_free_periods fp
             join profiles p on p.id = fp.customer_id and p.status = 'active'
-            where fp.ends_at > now() and fp.ends_at <= now() + interval '3 days'
-              and {_ALREADY_SENT.format(key="'free_period_ending:' || fp.customer_id")}
+            where fp.ends_at > now() + {after} and fp.ends_at <= now() + {until}
+              and {_ALREADY_SENT.format(key=f"'{key}:' || fp.customer_id")}
             """
         )
     ).all()
@@ -58,8 +71,11 @@ def _free_period_ending(db: Session) -> int:
                     "first_charge": float(membership.price_amount) if joined else None,
                     "in_pod": db.query(PodMember.id).filter(PodMember.customer_id == customer_id, PodMember.status == "active").first()
                     is not None,
+                    "saved": membership_service.total_member_savings(db, customer_id),
+                    "last_day": last_day,
+                    "days_left": max(1, math.ceil((ends_at - datetime.now(timezone.utc)).total_seconds() / 86400)),
                 },
-                dedupe_key=f"free_period_ending:{customer_id}",
+                dedupe_key=f"{key}:{customer_id}",
             )
         )
     notify_many(db, notices)

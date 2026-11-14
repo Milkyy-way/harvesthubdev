@@ -9,7 +9,7 @@ type Props = {
   subheadline?: string;
   // Optional right-side content in the brand row.
   right?: ReactNode;
-  // Bottom slot below the headline — a DateRangeFilter, segment pills, an
+  // Bottom slot below the headline — a PeriodPicker, segment pills, an
   // action button, or nothing.
   children?: ReactNode;
 };

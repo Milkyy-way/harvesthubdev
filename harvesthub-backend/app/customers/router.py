@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -15,11 +17,13 @@ def read_my_profile(db: Session = Depends(get_db), user=Depends(get_current_user
 
 @router.get("/me/dashboard-summary", response_model=DashboardSummaryOut)
 def read_my_dashboard_summary(
-    range: str | None = Query(None, description="week | month | 3m | 6m | all"),
+    range: str | None = Query(None, description="Older app builds: week | month | 3m | 6m | all (rolling)"),
+    period: str | None = Query(None, description="month | year | all (calendar, local time)"),
+    start: date | None = Query(None, description="A day in the month or year wanted; today when absent"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    return orders_service.get_dashboard_summary(db, user["id"], range)
+    return orders_service.get_dashboard_summary(db, user["id"], range, period, start)
 
 
 # Saved places, like Work, to browse nearby farms from (app/customers/places.py).

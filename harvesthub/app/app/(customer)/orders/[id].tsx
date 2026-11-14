@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, FlatList, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -7,6 +7,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { OrderStoreSection } from '../../../components/customer/OrderStoreSection';
+import { OrderPassNote } from '../../../components/customer/OrderPassNote';
+import type { MembershipOverview } from '../../../types/membership';
 import type { Order, StoreOrder } from '../../../types/orders';
 
 export default function OrderDetailScreen() {
@@ -20,6 +22,16 @@ export default function OrderDetailScreen() {
   const [busyStoreOrderId, setBusyStoreOrderId] = useState<string | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [ratingStoreOrderId, setRatingStoreOrderId] = useState<string | null>(null);
+
+  // Right after ordering: Harvest Pass status, for the "saved you" line.
+  const [pass, setPass] = useState<MembershipOverview | null>(null);
+  useEffect(() => {
+    if (justPlaced !== '1') return;
+    apiClient.get<MembershipOverview>('/membership').then(
+      (res) => setPass(res.data),
+      (err) => console.warn('Could not load Harvest Pass status:', err)
+    );
+  }, [justPlaced]);
 
   const loadOrder = useCallback(() => {
     if (!id) return;
@@ -194,6 +206,7 @@ export default function OrderDetailScreen() {
                 <Text style={styles.successText}>Order placed! Here&apos;s your confirmation.</Text>
               </View>
             ) : null}
+            {justPlaced === '1' ? <OrderPassNote order={order} pass={pass} /> : null}
             <View style={styles.summary}>
               <Text style={styles.summaryLabel}>Placed {new Date(order.placed_at).toLocaleString()}</Text>
               <Text style={styles.summaryTotal}>

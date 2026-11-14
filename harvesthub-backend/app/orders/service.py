@@ -1,7 +1,7 @@
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
@@ -28,6 +28,7 @@ from app.delivery.models import FarmDeliverySettings
 from app.customers.models import CustomerProfile
 from app.membership import service as membership_service
 from app.pods.models import Pod
+from app.core.localtime import LOCAL_TZ, to_local
 
 logger = logging.getLogger(__name__)
 
@@ -1031,10 +1032,59 @@ _RANGE_WINDOWS = {
 }
 
 
-def get_dashboard_summary(db: Session, customer_id: str, range_key: str | None = None) -> dict:
+# Calendar periods for the Dashboard's month/year arrows, in the marketplace's
+# local time (a 9 PM order on Oct 31 in DC belongs to October). `range_key`
+# above stays for app builds that still send the rolling windows.
+_CALENDAR_PERIODS = ("month", "year")
+
+
+def _period_bounds(period: str, start: date | None) -> tuple[date, date, date]:
+    """(previous period's first day, this period's first day, next period's
+    first day) for the calendar month or year holding `start` (today, local
+    time, when absent)."""
+    day = start or datetime.now(LOCAL_TZ).date()
+    if period == "year":
+        return date(day.year - 1, 1, 1), date(day.year, 1, 1), date(day.year + 1, 1, 1)
+    first = date(day.year, day.month, 1)
+    following = date(day.year + (day.month == 12), day.month % 12 + 1, 1)
+    previous = date(day.year - (day.month == 1), (day.month - 2) % 12 + 1, 1)
+    return previous, first, following
+
+
+def _local_midnight(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _money(kept_store_orders: list) -> tuple[float, float]:
+    """(spent, saved) on these store orders. Saved = promo codes plus what
+    Harvest Pass took off (the waived service fee)."""
+    spent = round(sum(float(so.total) for so in kept_store_orders), 2)
+    saved = round(sum(float(so.promo_discount) + float(so.member_savings or 0) for so in kept_store_orders), 2)
+    return spent, saved
+
+
+def get_dashboard_summary(
+    db: Session, customer_id: str, range_key: str | None = None, period: str | None = None, start: date | None = None
+) -> dict:
     orders = db.query(Order).filter(Order.customer_id == customer_id).all()
 
+    calendar = period in _CALENDAR_PERIODS
+    if calendar:
+        previous_first, period_first, period_next = _period_bounds(period, start)
+    period_fields = {
+        "period": period if calendar else ("all" if period == "all" else None),
+        "period_start": period_first.isoformat() if calendar else None,
+        "period_end": period_next.isoformat() if calendar else None,
+        "previous": None,
+        "first_order_on": min(to_local(_as_utc(o.placed_at)).date() for o in orders).isoformat() if orders else None,
+    }
+
     empty = {
+        **period_fields,
         "orders_total": 0,
         "orders_active": 0,
         "orders_completed": 0,
@@ -1081,20 +1131,37 @@ def get_dashboard_summary(db: Session, customer_id: str, range_key: str | None =
         bucket["order_count"] += 1
         bucket["amount"] = round(bucket["amount"] + sum(float(so.total) for so in store_orders_by_order.get(order.id, [])), 2)
 
-    # Everything below IS scoped to range_key (all-time when absent/'all'/
-    # unrecognized) — the Dashboard tab's date filter controls the whole
-    # view (stat tiles + insights), not just a headline number.
-    window_start = None
-    if range_key in _RANGE_WINDOWS:
+    # Everything below IS scoped to the chosen period: a calendar month or
+    # year (`period`), else range_key's rolling window, else all time. The
+    # Dashboard's date control drives the whole view (stat tiles + insights),
+    # not just a headline number.
+    window_start = window_end = None
+    if calendar:
+        window_start, window_end = _local_midnight(period_first), _local_midnight(period_next)
+    elif range_key in _RANGE_WINDOWS:
         window_start = datetime.now(timezone.utc) - _RANGE_WINDOWS[range_key]
 
-    orders_in_range = [o for o in orders if window_start is None or o.placed_at >= window_start]
+    def placed_in(order, lo, hi) -> bool:
+        placed = _as_utc(order.placed_at)
+        return (lo is None or placed >= lo) and (hi is None or placed < hi)
+
+    orders_in_range = [o for o in orders if placed_in(o, window_start, window_end)]
     order_ids_in_range = {o.id for o in orders_in_range}
     kept_store_orders = [so for so in all_kept_store_orders if so.order_id in order_ids_in_range]
 
-    spending_total = round(sum(float(so.total) for so in kept_store_orders), 2)
-    # Promo codes plus what Harvest Pass took off (the waived service fee).
-    savings_total = round(sum(float(so.promo_discount) + float(so.member_savings or 0) for so in kept_store_orders), 2)
+    spending_total, savings_total = _money(kept_store_orders)
+
+    # The period before, for "+2 vs October" on the tiles.
+    if calendar:
+        before = [o for o in orders if placed_in(o, _local_midnight(previous_first), window_start)]
+        before_ids = {o.id for o in before}
+        before_spent, before_saved = _money([so for so in all_kept_store_orders if so.order_id in before_ids])
+        period_fields["previous"] = {
+            "start": previous_first.isoformat(),
+            "orders_total": len(before),
+            "spending": before_spent,
+            "savings": before_saved,
+        }
 
     orders_with_spend = {so.order_id for so in kept_store_orders}
     average_order_value = round(spending_total / len(orders_with_spend), 2) if orders_with_spend else 0.0
@@ -1122,6 +1189,7 @@ def get_dashboard_summary(db: Session, customer_id: str, range_key: str | None =
             most_ordered_product = {"product_name": top_name, "quantity": top_qty}
 
     return {
+        **period_fields,
         "orders_total": len(orders_in_range),
         "orders_active": sum(1 for o in orders_in_range if o.status == "active"),
         "orders_completed": sum(1 for o in orders_in_range if o.status == "completed"),

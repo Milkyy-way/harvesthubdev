@@ -1,29 +1,33 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, chartColors } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { formatMoney } from '../../../lib/format';
 import { HeroShell } from '../../../components/customer/HeroShell';
-import { DateRangeFilter } from '../../../components/customer/DateRangeFilter';
+import { PeriodPicker } from '../../../components/customer/PeriodPicker';
 import { StatTile } from '../../../components/customer/StatTile';
 import { WeeklyActivityChart } from '../../../components/customer/WeeklyActivityChart';
 import { DonutChart, type DonutSegment } from '../../../components/customer/DonutChart';
 import { Section } from '../../../components/Section';
-import type { CategorySpend, DashboardSummary, DashboardRangeKey } from '../../../types/dashboard';
+import type { CategorySpend, DashboardSummary } from '../../../types/dashboard';
+import { canGoForward, currentPeriod, periodPhrase, shortName, type Period } from '../../../lib/period';
+import type { OrderStatus } from '../../../types/orders';
+import { requestOrdersTab } from '../../../lib/ordersTabRequest';
 
-const RANGE_LABELS: Record<DashboardRangeKey, string> = {
-  week: 'this week',
-  month: 'this month',
-  '3m': 'the last 3 months',
-  '6m': 'the last 6 months',
-  all: 'all time',
-};
+// "+2 vs Oct" / "-$5.00 vs Oct" / "Same as Oct", for the period before.
+function versus(now: number, before: number, name: string, money = false): string {
+  const diff = Math.round((now - before) * 100) / 100;
+  if (diff === 0) return `Same as ${name}`;
+  const amount = money ? formatMoney(Math.abs(diff)) : String(Math.abs(diff));
+  return `${diff > 0 ? '+' : '-'}${amount} vs ${name}`;
+}
 
 // Donut segments: the customer's top categories in their fixed chart colors
 // (color_slot comes from the backend, pinned to ALL-TIME rank so changing
-// the range never repaints a category), everything else folded into one
+// the period never repaints a category), everything else folded into one
 // gray "Other".
 function toDonutSegments(categories: CategorySpend[]): DonutSegment[] {
   const named = categories
@@ -49,18 +53,25 @@ function toDonutSegments(categories: CategorySpend[]): DonutSegment[] {
 }
 
 export default function CustomerDashboard() {
-  const [range, setRange] = useState<DashboardRangeKey>('month');
+  const router = useRouter();
+  const [period, setPeriod] = useState<Period>(() => currentPeriod('month'));
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback((forRange: DashboardRangeKey, isRefresh = false) => {
+  // Quick taps on the arrows: only the latest answer is shown.
+  const latest = useRef(0);
+  const load = useCallback((forPeriod: Period, isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    const request = ++latest.current;
     apiClient
-      .get<DashboardSummary>('/customers/me/dashboard-summary', { params: { range: forRange } })
+      .get<DashboardSummary>('/customers/me/dashboard-summary', {
+        params: { period: forPeriod.kind, start: forPeriod.kind === 'all' ? undefined : forPeriod.start },
+      })
       .then((res) => {
+        if (request !== latest.current) return;
         setSummary(res.data);
         setError(null);
       })
@@ -76,29 +87,40 @@ export default function CustomerDashboard() {
 
   useFocusEffect(
     useCallback(() => {
-      load(range);
-      // Reload only on focus + explicit range changes (handled by
-      // handleChangeRange below), not on every re-render.
+      load(period);
+      // Reload only on focus + explicit period changes (handled by
+      // handleChangePeriod below), not on every re-render.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [range])
+    }, [period])
   );
 
-  const handleChangeRange = (next: DashboardRangeKey) => {
-    setRange(next);
+  const handleChangePeriod = (next: Period) => {
+    setPeriod(next);
     load(next);
   };
 
+  const phrase = periodPhrase(period);
+  // "No orders in November yet" only while November is still going.
+  const yet = period.kind === 'all' || !canGoForward(period) ? ' yet' : '';
+  const before = summary?.previous && period.kind !== 'all' ? summary.previous : null;
+  const beforeName = before ? shortName(before.start, period.kind) : '';
+
   const segments = useMemo(() => toDonutSegments(summary?.spending_by_category ?? []), [summary]);
+
+  const openOrders = (tab: OrderStatus) => {
+    requestOrdersTab(tab);
+    router.push('/(customer)/(tabs)/orders');
+  };
 
   const headline =
     summary && summary.orders_total > 0
-      ? `You've saved ${formatMoney(summary.savings_all_time)} ${RANGE_LABELS[range]}`
+      ? `You've saved ${formatMoney(summary.savings_all_time)} ${phrase}`
       : "See what you've saved";
 
   return (
     <View style={styles.container}>
       <HeroShell headline={headline} subheadline={`Spent ${formatMoney(summary?.spending_all_time ?? 0)} buying direct`}>
-        <DateRangeFilter value={range} onChange={handleChangeRange} />
+        <PeriodPicker value={period} onChange={handleChangePeriod} firstOrderOn={summary?.first_order_on ?? null} />
       </HeroShell>
 
       {loading && !summary ? (
@@ -109,14 +131,17 @@ export default function CustomerDashboard() {
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.content}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(range, true)} tintColor={colors.primary} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(period, true)} tintColor={colors.primary} />}
         >
           {error && !summary ? (
             <Text style={styles.errorText}>{error}</Text>
           ) : summary && summary.orders_total === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyEmoji}>🧺</Text>
-              <Text style={styles.emptyText}>No orders {RANGE_LABELS[range]} yet.</Text>
+              <Text style={styles.emptyText}>
+                No orders {phrase}
+                {yet}.
+              </Text>
             </View>
           ) : summary ? (
             <>
@@ -125,18 +150,32 @@ export default function CustomerDashboard() {
                   icon="receipt-long"
                   label="Orders"
                   value={String(summary.orders_total)}
-                  caption={`${summary.orders_active} active · ${summary.orders_completed} done · ${summary.orders_cancelled} cancelled`}
+                  caption={
+                    before
+                      ? `${versus(summary.orders_total, before.orders_total, beforeName)} · ${summary.orders_active} active`
+                      : `${summary.orders_active} active · ${summary.orders_completed} done · ${summary.orders_cancelled} cancelled`
+                  }
+                  onPress={() => openOrders(summary.orders_active > 0 ? 'active' : 'completed')}
+                  accessibilityHint="Opens your orders"
                 />
-                <StatTile icon="account-balance-wallet" label="Spent" value={formatMoney(summary.spending_all_time)} />
-                <StatTile icon="savings" label="Saved" value={formatMoney(summary.savings_all_time)} caption="from promo codes" />
+                <StatTile
+                  icon="account-balance-wallet"
+                  label="Spent"
+                  value={formatMoney(summary.spending_all_time)}
+                  caption={before ? versus(summary.spending_all_time, before.spending, beforeName, true) : undefined}
+                />
+                <StatTile icon="savings" label="Saved" value={formatMoney(summary.savings_all_time)} caption="promo codes and Harvest Pass" />
                 <StatTile icon="trending-up" label="Avg order" value={formatMoney(summary.average_order_value)} />
               </View>
 
-              <Section title="What you buy" caption={`By category, ${RANGE_LABELS[range]} — item totals, before fees and tax. Tap a slice for details.`}>
+              <Section title="What you buy" caption={`By category ${phrase}: item totals, before fees and tax. Tap a slice for details.`}>
                 {segments.length > 0 ? (
                   <DonutChart segments={segments} formatValue={formatMoney} centerCaption="on produce" />
                 ) : (
-                  <Text style={styles.muted}>Nothing bought {RANGE_LABELS[range]} yet.</Text>
+                  <Text style={styles.muted}>
+                    Nothing bought {phrase}
+                    {yet}.
+                  </Text>
                 )}
               </Section>
 

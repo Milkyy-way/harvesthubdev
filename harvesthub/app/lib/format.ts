@@ -1,3 +1,15 @@
+// To the cent the way the server (Python's round(x, 2)) does it, so an amount
+// worked out in the app matches checkout's: half-cents round to the even cent
+// ($0.125 -> $0.12), and toFixed reads the float's exact value (1.075 is
+// really 1.07499..., so $1.07), where Math.round(x * 100) would say $1.08.
+export function roundCents(x: number): number {
+  if (Number.isInteger(x * 8) && Math.round(x * 1000) % 10 === 5) {
+    const cents = Math.floor(x * 100);
+    return (cents % 2 === 0 ? cents : cents + 1) / 100;
+  }
+  return Number(x.toFixed(2));
+}
+
 // "$1,234.50" / "-$10.00"
 export function formatMoney(amount: number): string {
   const abs = Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

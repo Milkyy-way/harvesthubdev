@@ -38,6 +38,9 @@ class MembershipOverviewOut(BaseModel):
     free_period_available: bool  # never used: they can tap Start free month
     free_month_used_elsewhere: bool = False  # this email or phone already had one
     free_service_fee_min_subtotal: float
+    # The service fee the Pass waives (5% of a farm's items), so the cart can
+    # say what it would save before checkout.
+    service_fee_rate: float = 0.0
     is_member: bool  # has the benefits right now — paid, or the free period
     membership: Optional[MembershipOut]
     total_savings: float

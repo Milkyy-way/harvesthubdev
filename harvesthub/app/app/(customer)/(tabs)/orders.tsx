@@ -1,14 +1,14 @@
-import { useCallback, useState } from 'react';
-import { View, Text, Pressable, FlatList, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { View, Text, Pressable, SectionList, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { colors, spacing, radius } from '../../../constants/theme';
+import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { HeroShell } from '../../../components/customer/HeroShell';
-import { DateRangeFilter } from '../../../components/customer/DateRangeFilter';
 import { OrderCard } from '../../../components/customer/OrderCard';
+import { takeOrdersTabRequest } from '../../../lib/ordersTabRequest';
+import { groupByDate } from '../../../lib/orderGroups';
 import type { Order, OrderStatus, ReorderResponse } from '../../../types/orders';
-import type { DashboardRangeKey } from '../../../types/dashboard';
 
 const TABS: { key: OrderStatus; label: string }[] = [
   { key: 'active', label: 'Active' },
@@ -26,7 +26,6 @@ export default function CustomerOrders() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<OrderStatus>('active');
-  const [range, setRange] = useState<DashboardRangeKey>('all');
   const [ordersByTab, setOrdersByTab] = useState<Record<OrderStatus, Order[]>>({
     active: [],
     completed: [],
@@ -36,10 +35,12 @@ export default function CustomerOrders() {
   const [error, setError] = useState<string | null>(null);
   const [reorderingId, setReorderingId] = useState<string | null>(null);
 
-  const loadOrders = useCallback((tab: OrderStatus, forRange: DashboardRangeKey) => {
+  // Every order in that list, newest first, under date headings (no date
+  // filter: replaced 2026-11-14).
+  const loadOrders = useCallback((tab: OrderStatus) => {
     setLoading(true);
     apiClient
-      .get<Order[]>('/orders', { params: { status: tab, range: forRange } })
+      .get<Order[]>('/orders', { params: { status: tab } })
       .then((res) => {
         setOrdersByTab((prev) => ({ ...prev, [tab]: res.data }));
         setError(null);
@@ -51,23 +52,26 @@ export default function CustomerOrders() {
       .finally(() => setLoading(false));
   }, []);
 
+  // The list in view, for the focus reload below (it doesn't re-run when it
+  // changes: switching lists loads on its own).
+  const tabRef = useRef(activeTab);
+
   useFocusEffect(
     useCallback(() => {
-      loadOrders(activeTab, range);
-      // Reload only the tab/range currently in view on each focus —
-      // switching either triggers its own load below.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      // Sent here from an order tile (Dashboard, Account): open that list.
+      const requested = takeOrdersTabRequest();
+      if (requested) {
+        tabRef.current = requested;
+        setActiveTab(requested);
+      }
+      loadOrders(tabRef.current);
     }, [loadOrders])
   );
 
   const handleSelectTab = (tab: OrderStatus) => {
+    tabRef.current = tab;
     setActiveTab(tab);
-    loadOrders(tab, range);
-  };
-
-  const handleChangeRange = (next: DashboardRangeKey) => {
-    setRange(next);
-    loadOrders(activeTab, next);
+    loadOrders(tab);
   };
 
   const handleRebook = async (order: Order) => {
@@ -93,12 +97,11 @@ export default function CustomerOrders() {
   };
 
   const orders = ordersByTab[activeTab];
+  const sections = groupByDate(orders);
 
   return (
     <View style={styles.container}>
-      <HeroShell headline="Your orders">
-        <DateRangeFilter value={range} onChange={handleChangeRange} />
-      </HeroShell>
+      <HeroShell headline="Your orders" />
 
       <View style={styles.tabRow}>
         {TABS.map((tab) => {
@@ -120,11 +123,17 @@ export default function CustomerOrders() {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
-        <FlatList
-          data={orders}
+        <SectionList
+          sections={sections}
           keyExtractor={(order) => order.id}
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={orders.length === 0 ? styles.emptyContent : styles.listContent}
           ItemSeparatorComponent={() => <View style={styles.divider} />}
+          renderSectionHeader={({ section }) => (
+            <Text style={styles.sectionHeading} accessibilityRole="header">
+              {section.title}
+            </Text>
+          )}
           renderItem={({ item }) => (
             <OrderCard
               order={item}
@@ -165,6 +174,14 @@ const styles = StyleSheet.create({
   tabLabelActive: { color: colors.white },
   listContent: { paddingBottom: spacing.xl },
   divider: { height: 1, backgroundColor: colors.border, marginHorizontal: spacing.lg },
+  sectionHeading: {
+    fontFamily: fonts.headlineBold,
+    fontSize: 17,
+    color: colors.text,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
+  },
   emptyContent: { flexGrow: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   emptyText: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },

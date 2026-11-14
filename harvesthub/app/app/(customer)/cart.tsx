@@ -10,6 +10,8 @@ import { apiClient } from '../../lib/apiClient';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCheckoutDraft } from '../../contexts/CheckoutDraftContext';
 import { CartFarmSection } from '../../components/customer/CartFarmSection';
+import { CartPassNote } from '../../components/customer/CartPassNote';
+import type { MembershipOverview } from '../../types/membership';
 import { isFulfillmentReady } from '../../types/checkout';
 import type { CartActionResponse, CartSummary } from '../../types/database';
 import type { FarmDeliveryOption } from '../../types/delivery';
@@ -25,6 +27,7 @@ export default function CartScreen() {
   const [error, setError] = useState<string | null>(null);
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
   const [deliveryByFarm, setDeliveryByFarm] = useState<Record<string, FarmDeliveryOption>>({});
+  const [pass, setPass] = useState<MembershipOverview | null>(null);
 
   const loadCart = useCallback(() => {
     setLoading(true);
@@ -83,6 +86,11 @@ export default function CartScreen() {
   useFocusEffect(
     useCallback(() => {
       loadCart();
+      // For the Harvest Pass line above the total (joining elsewhere changes it).
+      apiClient.get<MembershipOverview>('/membership').then(
+        (res) => setPass(res.data),
+        (err) => console.warn('Could not load Harvest Pass status:', err)
+      );
     }, [loadCart])
   );
 
@@ -219,6 +227,7 @@ export default function CartScreen() {
 
       {cart && cart.farms.length > 0 ? (
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
+          <CartPassNote cart={cart} pass={pass} />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>
               {cart.item_count} item{cart.item_count === 1 ? '' : 's'} · {cart.farms.length} farm

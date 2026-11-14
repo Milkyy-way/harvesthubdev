@@ -36,6 +36,7 @@ from app.core.pricing import (
     HARVEST_PASS_MONTHLY_PRICE,
     HARVEST_PASS_PLANS,
     MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
+    SERVICE_FEE_RATE,
     harvest_pass_plan_price,
 )
 from app.membership import free_month_guard
@@ -540,6 +541,7 @@ def get_overview(db: Session, customer_id) -> dict:
         "free_period_available": period is None and membership is None and not used_elsewhere,
         "free_month_used_elsewhere": used_elsewhere,
         "free_service_fee_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
+        "service_fee_rate": SERVICE_FEE_RATE,
         # Has the benefits right now — paid, or the free period.
         "is_member": paid_benefits or free_active,
         "membership": _membership_out(membership) if membership else None,

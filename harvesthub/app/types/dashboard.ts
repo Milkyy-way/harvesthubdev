@@ -28,12 +28,27 @@ export interface CategorySpend {
   color_slot: number | null;
 }
 
+// The period before the one asked for, for "+2 vs Oct".
+export interface PeriodTotals {
+  start: string;
+  orders_total: number;
+  spending: number;
+  savings: number;
+}
+
 // spending_all_time/savings_all_time/average_order_value/favorite_farm/
-// most_ordered_product/orders_* are all scoped to whatever `range` was
-// requested (all-time when omitted) — see DateRangeFilter and
-// app/orders/service.py::get_dashboard_summary. activity_last_7_days is
-// the one exception — always the real last 7 days, unaffected by range.
+// most_ordered_product/orders_* are all scoped to the period asked for
+// (`period` + `start`: a calendar month or year, see lib/period.ts and
+// PeriodPicker; all time when omitted) — app/orders/service.py::
+// get_dashboard_summary. activity_last_7_days is the one exception: always
+// the real last 7 days.
 export interface DashboardSummary {
+  period?: 'month' | 'year' | 'all' | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  previous?: PeriodTotals | null;
+  /** The customer's first order day, 'YYYY-MM-DD': the arrows stop there. */
+  first_order_on?: string | null;
   orders_total: number;
   orders_active: number;
   orders_completed: number;
@@ -46,5 +61,3 @@ export interface DashboardSummary {
   most_ordered_product: TopProduct | null;
   spending_by_category: CategorySpend[];
 }
-
-export type DashboardRangeKey = 'week' | 'month' | '3m' | '6m' | 'all';

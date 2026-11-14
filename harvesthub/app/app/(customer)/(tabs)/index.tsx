@@ -9,7 +9,7 @@ import { apiClient } from '../../../lib/apiClient';
 import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { Header } from '../../../components/customer/Header';
 import { SavingsTicker } from '../../../components/customer/SavingsTicker';
-import { HarvestPassBanner } from '../../../components/customer/HarvestPassBanner';
+import { HarvestPassCard } from '../../../components/customer/HarvestPassCard';
 import { HarvestPassWelcome } from '../../../components/customer/HarvestPassWelcome';
 import { PodsHomeCard } from '../../../components/customer/PodsHomeCard';
 import { DealsHomeRail } from '../../../components/customer/DealsHomeRail';
@@ -254,8 +254,8 @@ export default function CustomerHome() {
             {!filtering ? (
               <>
                 {savingsAmount != null && savingsAmount > 0 ? <SavingsTicker amount={savingsAmount} /> : null}
-                {membership ? <HarvestPassBanner overview={membership} /> : null}
-                <PodsHomeCard pods={pods} />
+                <HarvestPassCard overview={membership} onChanged={setMembership} />
+                <PodsHomeCard pods={pods} isMember={membership?.is_member ?? false} />
                 <DealsHomeRail deals={deals} />
                 <FarmerSpotlightRail items={spotlight} onPressFarmer={openFarm} />
                 <HarvestPicksRail items={harvestPicks} />

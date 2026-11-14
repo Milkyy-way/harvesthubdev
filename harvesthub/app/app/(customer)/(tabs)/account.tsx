@@ -14,6 +14,8 @@ import { SettingsRow } from '../../../components/customer/SettingsRow';
 import { Section } from '../../../components/Section';
 import { InfoRow, ChipRow } from '../../../components/InfoRow';
 import type { DashboardSummary } from '../../../types/dashboard';
+import type { OrderStatus } from '../../../types/orders';
+import { requestOrdersTab } from '../../../lib/ordersTabRequest';
 import type { MembershipOverview } from '../../../types/membership';
 import { formatLongDate } from '../../../lib/harvestPass';
 
@@ -37,6 +39,11 @@ export default function CustomerAccount() {
       );
     }, [])
   );
+
+  const openOrders = (tab: OrderStatus) => {
+    requestOrdersTab(tab);
+    router.push('/(customer)/(tabs)/orders');
+  };
 
   const dietaryLabels = (customerProfile?.dietary_preferences ?? []).map(
     (value) => DIETARY_PREFERENCE_OPTIONS.find((o) => o.value === value)?.label ?? value
@@ -68,8 +75,20 @@ export default function CustomerAccount() {
         </View>
 
         <View style={styles.statsRow}>
-          <StatTile icon="receipt-long" label="Total Orders" value={summary ? String(summary.orders_total) : '—'} />
-          <StatTile icon="cancel" label="Cancelled" value={summary ? String(summary.orders_cancelled) : '—'} />
+          <StatTile
+            icon="receipt-long"
+            label="Total Orders"
+            value={summary ? String(summary.orders_total) : '—'}
+            onPress={() => openOrders(summary && summary.orders_active === 0 ? 'completed' : 'active')}
+            accessibilityHint="Opens your orders"
+          />
+          <StatTile
+            icon="cancel"
+            label="Cancelled"
+            value={summary ? String(summary.orders_cancelled) : '—'}
+            onPress={() => openOrders('cancelled')}
+            accessibilityHint="Opens your cancelled orders"
+          />
         </View>
 
         <SettingsRow

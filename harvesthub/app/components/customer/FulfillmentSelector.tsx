@@ -131,9 +131,13 @@ export function FulfillmentSelector({
               <MaterialIcons name="chevron-right" size={18} color={colors.primaryDark} />
             </Pressable>
           ) : !selectedPod && pods.length === 0 && delivery.offers_pod_delivery ? (
-            <Pressable style={styles.nudge} onPress={() => router.push('/(customer)/pods' as Href)}>
+            <Pressable style={styles.nudge} onPress={() => router.push('/(customer)/pods' as Href)} accessibilityRole="button">
               <MaterialIcons name="groups" size={16} color={colors.primaryDark} />
-              <Text style={styles.nudgeText}>Split this fee with neighbors. Start a pod.</Text>
+              <Text style={styles.nudgeText}>
+                {delivery.delivery_fee > 0
+                  ? `Split this $${delivery.delivery_fee.toFixed(2)} delivery fee with neighbors: start a pod, or join one with a code.`
+                  : 'Order with neighbors: start a pod, or join one with a code.'}
+              </Text>
               <MaterialIcons name="chevron-right" size={18} color={colors.primaryDark} />
             </Pressable>
           ) : null}
