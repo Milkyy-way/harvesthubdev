@@ -19,7 +19,11 @@ export function RatingStars({ value, onSelect, size = 22, disabled }: Props) {
           key={star}
           onPress={onSelect && !disabled ? () => onSelect(star) : undefined}
           disabled={!onSelect || disabled}
-          hitSlop={6}
+          // At least 44 points to tap, whatever the star's size.
+          hitSlop={Math.max(6, Math.ceil((44 - size) / 2))}
+          accessibilityRole={onSelect ? 'button' : undefined}
+          accessibilityLabel={`${star} star${star === 1 ? '' : 's'}`}
+          accessibilityState={{ selected: star <= value, disabled: !onSelect || disabled }}
         >
           <MaterialIcons
             name={star <= value ? 'star' : 'star-border'}
@@ -33,5 +37,5 @@ export function RatingStars({ value, onSelect, size = 22, disabled }: Props) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 2 },
+  row: { flexDirection: 'row', gap: 6 },
 });

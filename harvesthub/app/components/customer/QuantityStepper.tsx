@@ -3,6 +3,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, radius } from '../../constants/theme';
 
 type Props = {
+  name: string; // the product, for screen readers: "Add Kale"
   quantity: number;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -12,7 +13,7 @@ type Props = {
 
 // The add-to-cart control that floats on a product photo: a white "+"
 // button while nothing's in the cart, growing into "− 2 +" once something is.
-export function QuantityStepper({ quantity, onIncrement, onDecrement, canIncrement, canDecrement }: Props) {
+export function QuantityStepper({ name, quantity, onIncrement, onDecrement, canIncrement, canDecrement }: Props) {
   if (quantity === 0) {
     return (
       <Pressable
@@ -20,6 +21,9 @@ export function QuantityStepper({ quantity, onIncrement, onDecrement, canIncreme
         onPress={onIncrement}
         disabled={!canIncrement}
         hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Add ${name}`}
+        accessibilityState={{ disabled: !canIncrement }}
       >
         <MaterialIcons name="add" size={22} color={colors.primary} />
       </Pressable>
@@ -28,11 +32,28 @@ export function QuantityStepper({ quantity, onIncrement, onDecrement, canIncreme
 
   return (
     <View style={styles.pill}>
-      <Pressable onPress={onDecrement} disabled={!canDecrement} hitSlop={8} style={[styles.pillButton, !canDecrement && styles.disabled]}>
+      <Pressable
+        onPress={onDecrement}
+        disabled={!canDecrement}
+        hitSlop={8}
+        style={[styles.pillButton, !canDecrement && styles.disabled]}
+        accessibilityRole="button"
+        accessibilityLabel={quantity === 1 ? `Remove ${name} from cart` : `Remove one ${name}`}
+      >
         <MaterialIcons name={quantity === 1 ? 'delete-outline' : 'remove'} size={18} color={colors.primary} />
       </Pressable>
-      <Text style={styles.value}>{quantity}</Text>
-      <Pressable onPress={onIncrement} disabled={!canIncrement} hitSlop={8} style={[styles.pillButton, !canIncrement && styles.disabled]}>
+      <Text style={styles.value} accessibilityLabel={`${quantity} ${name} in cart`}>
+        {quantity}
+      </Text>
+      <Pressable
+        onPress={onIncrement}
+        disabled={!canIncrement}
+        hitSlop={8}
+        style={[styles.pillButton, !canIncrement && styles.disabled]}
+        accessibilityRole="button"
+        accessibilityLabel={`Add one more ${name}`}
+        accessibilityState={{ disabled: !canIncrement }}
+      >
         <MaterialIcons name="add" size={18} color={colors.primary} />
       </Pressable>
     </View>

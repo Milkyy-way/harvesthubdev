@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatUsDate, isoToUsDate, usDateToIso } from '../../lib/dateInput';
+import { clearApplicationDraft, loadApplicationDraft, saveApplicationDraft } from '../../lib/applicationDraft';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { supabase } from '../../lib/supabase';
 import { signOut } from '../../lib/signOut';
@@ -91,7 +93,8 @@ export default function FarmerApplication() {
     taxId: farmerProfile?.tax_id ?? '',
   }));
   const [businessLicenseNumber, setBusinessLicenseNumber] = useState(farmerVerification?.business_license_number ?? '');
-  const [insuranceExpirationDate, setInsuranceExpirationDate] = useState(farmerVerification?.insurance_expiration_date ?? '');
+  // Typed and shown as MM/DD/YYYY (lib/dateInput.ts), saved as YYYY-MM-DD.
+  const [insuranceExpiration, setInsuranceExpiration] = useState(() => isoToUsDate(farmerVerification?.insurance_expiration_date));
   const [referencesText, setReferencesText] = useState(farmerVerification?.references_text ?? '');
   const [files, setFiles] = useState<Record<DocKey, PickedFile | null>>(NO_FILES);
   const [storedPaths, setStoredPaths] = useState<Partial<Record<DocColumn, string | null>>>(() =>
@@ -100,11 +103,42 @@ export default function FarmerApplication() {
   const [existingCerts, setExistingCerts] = useState<FarmerCertification[]>([]);
   const [newCerts, setNewCerts] = useState<NewCertification[]>([]);
 
+  // Each step starts at its top, so the farmer sees which step they're on.
+  const scroll = useRef<ScrollView>(null);
+  useEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [step]);
+
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const userId = session?.user.id;
+
+  // A draft on the phone (lib/applicationDraft.ts): restored once, then kept up
+  // to date, so leaving the app mid-way doesn't lose what was typed.
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  useEffect(() => {
+    if (!userId) return;
+    loadApplicationDraft(userId).then((draft) => {
+      if (draft) {
+        setStep(draft.step);
+        setFarmDetails((prev) => ({ ...prev, ...draft.farmDetails, farmTypes: draft.farmDetails.farmTypes as FarmDetailsForm['farmTypes'] }));
+        setBusinessLicenseNumber(draft.businessLicenseNumber);
+        setInsuranceExpiration(draft.insuranceExpiration);
+        setReferencesText(draft.referencesText);
+      }
+      setDraftLoaded(true);
+    });
+  }, [userId]);
+  useEffect(() => {
+    if (!userId || !draftLoaded) return;
+    const timer = setTimeout(
+      () => saveApplicationDraft(userId, { step, farmDetails, businessLicenseNumber, insuranceExpiration, referencesText }),
+      400
+    );
+    return () => clearTimeout(timer);
+  }, [userId, draftLoaded, step, farmDetails, businessLicenseNumber, insuranceExpiration, referencesText]);
 
   useEffect(() => {
     if (!userId) return;
@@ -196,7 +230,7 @@ export default function FarmerApplication() {
 
     const result = farmerVerificationSchema.safeParse({
       businessLicenseNumber,
-      insuranceExpirationDate,
+      insuranceExpirationDate: usDateToIso(insuranceExpiration),
       referencesText,
       certifications: newCerts,
     });
@@ -265,6 +299,7 @@ export default function FarmerApplication() {
       // 4. Submit — re-checked server-side; a rejected application goes back to pending.
       const { error: submitError } = await supabase.rpc('submit_farmer_verification');
       if (submitError) throw submitError;
+      await clearApplicationDraft(userId);
 
       await refreshProfile();
     } catch (err) {
@@ -275,10 +310,15 @@ export default function FarmerApplication() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>
+    // A solid strip under the status bar, so the form doesn't scroll under the clock.
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[styles.flex1, styles.screen, { paddingTop: insets.top }]}
+    >
       <ScrollView
+        ref={scroll}
         style={styles.screen}
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.sm }]}
+        contentContainerStyle={[styles.container, { paddingTop: spacing.sm }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.topBar}>
@@ -291,12 +331,15 @@ export default function FarmerApplication() {
           </Pressable>
         </View>
 
+        {/* Steps 1 and 2 were choosing farmer and making the account (app/(auth)/). */}
         <View style={styles.progressRow}>
+          <View style={[styles.progressBar, styles.progressBarActive]} />
+          <View style={[styles.progressBar, styles.progressBarActive]} />
           <View style={[styles.progressBar, styles.progressBarActive]} />
           <View style={[styles.progressBar, step === 'documents' && styles.progressBarActive]} />
         </View>
         <Text style={styles.stepLabel}>
-          Step {step === 'farm-details' ? '1' : '2'} of 2 · {step === 'farm-details' ? 'Farm details' : 'Verification documents'}
+          Step {step === 'farm-details' ? '3' : '4'} of 4 · {step === 'farm-details' ? 'Farm details' : 'Verification documents'}
         </Text>
 
         <Text style={styles.title}>
@@ -308,7 +351,7 @@ export default function FarmerApplication() {
         </Text>
         <Text style={styles.subtitle}>
           {step === 'farm-details'
-            ? 'This stays with your application — it isn’t shown on your public profile.'
+            ? 'Customers see your farm’s address: it’s where they pick up orders, and your city shows on your farm page. Your Tax ID stays private.'
             : 'We review these by hand before approving your account. PDF, JPG, PNG or HEIC, up to 10 MB each.'}
         </Text>
 
@@ -328,7 +371,8 @@ export default function FarmerApplication() {
           <>
             <Card title="Farm location">
               <AddressSearchField
-                placeholder="Farm street address"
+                label="Farm street address"
+                placeholder="Start typing, then pick your address"
                 value={farmDetails.addressStreet}
                 onChangeText={(addressStreet) => updateFarmDetails({ addressStreet })}
                 onSelectAddress={(a) =>
@@ -337,7 +381,7 @@ export default function FarmerApplication() {
                 error={fieldErrors.addressStreet}
               />
               <TextField
-                placeholder="City"
+                label="City"
                 value={farmDetails.addressCity}
                 onChangeText={(addressCity) => updateFarmDetails({ addressCity })}
                 error={fieldErrors.addressCity}
@@ -345,7 +389,8 @@ export default function FarmerApplication() {
               <View style={styles.row}>
                 <TextField
                   style={styles.flex1}
-                  placeholder="State"
+                  label="State"
+                  placeholder="DC"
                   autoCapitalize="characters"
                   value={farmDetails.addressState}
                   onChangeText={(addressState) => updateFarmDetails({ addressState })}
@@ -353,7 +398,7 @@ export default function FarmerApplication() {
                 />
                 <TextField
                   style={styles.flex1}
-                  placeholder="ZIP code"
+                  label="ZIP code"
                   keyboardType="number-pad"
                   value={farmDetails.addressZip}
                   onChangeText={(addressZip) => updateFarmDetails({ addressZip })}
@@ -371,14 +416,17 @@ export default function FarmerApplication() {
               />
               {fieldErrors.farmTypes ? <Text style={styles.fieldError}>{fieldErrors.farmTypes}</Text> : null}
               <TextField
-                placeholder="Years in operation"
+                label="Years in operation"
+                placeholder="e.g. 5"
                 keyboardType="number-pad"
                 value={farmDetails.yearsInOperation}
                 onChangeText={(yearsInOperation) => updateFarmDetails({ yearsInOperation })}
                 error={fieldErrors.yearsInOperation}
               />
               <TextField
-                placeholder="Tax ID / EIN"
+                label="Tax ID / EIN"
+                hint="Kept private. Used for your payouts and tax forms."
+                placeholder="e.g. 12-3456789"
                 value={farmDetails.taxId}
                 onChangeText={(taxId) => updateFarmDetails({ taxId })}
                 error={fieldErrors.taxId}
@@ -393,7 +441,7 @@ export default function FarmerApplication() {
           <>
             <Card title="Business license">
               <TextField
-                placeholder="Business license number"
+                label="Business license number"
                 value={businessLicenseNumber}
                 onChangeText={setBusinessLicenseNumber}
                 error={fieldErrors.businessLicenseNumber}
@@ -404,9 +452,12 @@ export default function FarmerApplication() {
             <Card title="Insurance">
               <DocumentField doc={DOCUMENTS[1]} files={files} storedPaths={storedPaths} errors={fieldErrors} onChange={setFile} />
               <TextField
-                placeholder="Insurance expiration date (YYYY-MM-DD)"
-                value={insuranceExpirationDate}
-                onChangeText={setInsuranceExpirationDate}
+                label="Insurance expiration date"
+                placeholder="MM/DD/YYYY"
+                keyboardType="number-pad"
+                maxLength={10}
+                value={insuranceExpiration}
+                onChangeText={(typed) => setInsuranceExpiration(formatUsDate(typed))}
                 error={fieldErrors.insuranceExpirationDate}
               />
             </Card>
@@ -467,7 +518,8 @@ export default function FarmerApplication() {
             <Card title="Anything else" caption="Optional.">
               <DocumentField doc={DOCUMENTS[4]} files={files} storedPaths={storedPaths} errors={fieldErrors} onChange={setFile} />
               <TextField
-                placeholder="References — markets or co-ops you've sold through"
+                label="References (optional)"
+                placeholder="Markets or co-ops you've sold through"
                 multiline
                 value={referencesText}
                 onChangeText={setReferencesText}

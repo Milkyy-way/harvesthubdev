@@ -5,6 +5,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
+import { useCartStepper } from '../../../lib/useCartStepper';
 import { FarmerDetailHeader } from '../../../components/customer/FarmerDetailHeader';
 import { FarmDealsRow } from '../../../components/customer/FarmDealsRow';
 import { FarmPromoBanner } from '../../../components/customer/FarmPromoBanner';
@@ -13,7 +14,7 @@ import { SearchBar } from '../../../components/customer/SearchBar';
 import { ProductCard } from '../../../components/customer/ProductCard';
 import { ProductCardGrid } from '../../../components/customer/ProductCardGrid';
 import { CartTotalBar } from '../../../components/customer/CartTotalBar';
-import type { Category, CartActionResponse, FarmerDetail, ProductItem } from '../../../types/database';
+import type { Category, FarmerDetail, ProductItem } from '../../../types/database';
 
 type ViewMode = 'list' | 'grid';
 
@@ -31,7 +32,6 @@ export default function FarmerDetailScreen() {
   const [loadingProducts, setLoadingProducts] = useState(true);
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const debouncedSearch = useDebouncedValue(searchText, 300);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
@@ -117,41 +117,20 @@ export default function FarmerDetailScreen() {
     setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, cart_quantity: quantity } : p)));
   }, []);
 
-  const handleIncrement = useCallback(
-    async (product: ProductItem) => {
-      if (pendingProductId || product.cart_quantity >= product.quantity_available) return;
-      setPendingProductId(product.id);
-      setProductQuantity(product.id, product.cart_quantity + 1); // optimistic
-      try {
-        const res = await apiClient.post<CartActionResponse>(`/cart/items/${product.id}/increment`);
-        setProductQuantity(product.id, res.data.quantity);
-      } catch (err) {
-        console.warn('Could not add item to cart:', err);
-        setProductQuantity(product.id, product.cart_quantity); // rollback
-      } finally {
-        setPendingProductId(null);
-      }
+  // Taps queue up per product instead of being dropped while one is saving.
+  const { step } = useCartStepper({
+    onShow: setProductQuantity,
+    onSettled: setProductQuantity,
+    onError: (productId, err) => {
+      console.warn('Could not update cart:', err);
+      apiClient.get<ProductItem[]>('/products', { params: { farmer_id: id } }).then(
+        (res) => setProducts(res.data),
+        () => undefined
+      );
     },
-    [pendingProductId, setProductQuantity]
-  );
-
-  const handleDecrement = useCallback(
-    async (product: ProductItem) => {
-      if (pendingProductId || product.cart_quantity <= 0) return;
-      setPendingProductId(product.id);
-      setProductQuantity(product.id, product.cart_quantity - 1); // optimistic
-      try {
-        const res = await apiClient.post<CartActionResponse>(`/cart/items/${product.id}/decrement`);
-        setProductQuantity(product.id, res.data.quantity);
-      } catch (err) {
-        console.warn('Could not update cart:', err);
-        setProductQuantity(product.id, product.cart_quantity); // rollback
-      } finally {
-        setPendingProductId(null);
-      }
-    },
-    [pendingProductId, setProductQuantity]
-  );
+  });
+  const handleIncrement = (product: ProductItem) => step(product.id, product.cart_quantity, 1, product.quantity_available);
+  const handleDecrement = (product: ProductItem) => step(product.id, product.cart_quantity, -1);
 
   if (loadingFarmer) {
     return (
@@ -223,14 +202,12 @@ export default function FarmerDetailScreen() {
           viewMode === 'grid' ? (
             <ProductCardGrid
               product={item}
-              pending={pendingProductId === item.id}
               onIncrement={() => handleIncrement(item)}
               onDecrement={() => handleDecrement(item)}
             />
           ) : (
             <ProductCard
               product={item}
-              pending={pendingProductId === item.id}
               onIncrement={() => handleIncrement(item)}
               onDecrement={() => handleDecrement(item)}
             />

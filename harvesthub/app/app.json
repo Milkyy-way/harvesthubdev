@@ -72,7 +72,7 @@
         "expo-image-picker",
         {
           "photosPermission": "HarvestHub only uses the camera, to photograph where a delivery was left. It does not browse your photo library.",
-          "cameraPermission": "HarvestHub uses the camera so farmers can take a photo of where they left a delivery.",
+          "cameraPermission": "HarvestHub uses the camera so farmers can photograph their products and farm, and where they left a delivery.",
           "microphonePermission": false
         }
       ],

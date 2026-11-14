@@ -68,10 +68,13 @@ def create_order_for(
     is_member: bool,
     unit_price=None,
     delivery_fee: float | None = None,
+    stock_units: int | None = None,
 ):
     """An ordinary order for one join, ready to charge. Its stock was already set
     aside by the deal. Doesn't commit. Returns the payment's id. delivery_fee: this
-    household's share, for a pod's drop point."""
+    household's share, for a pod's drop point. stock_units: the whole listing units
+    this order holds (from _stock_split at the deadline); on its own, its shares
+    rounded up, as customer.stock_for takes them."""
     fee = float(commit.delivery_fee) if delivery_fee is None else delivery_fee
     priced = customer_side.price_order(deal, product, farmer, commit.units, fee, is_member, unit_price)
     delivered = commit.fulfillment_method == "delivery"
@@ -122,9 +125,8 @@ def create_order_for(
             quantity=commit.units,
             line_total=priced["subtotal"],
             keep_cold=bool(product.keep_cold),
-            # Whole listing units only: rounding down means a cancelled share can
-            # return a little less than it took, and never more than was there.
-            stock_units=math.floor(service.dec(deal.share_size) * commit.units),
+            # What a cancelled order gives back: exactly what it held.
+            stock_units=customer_side.stock_for(deal, commit.units) if stock_units is None else stock_units,
         )
     )
     payment_id = uuid.uuid4()
@@ -189,6 +191,19 @@ def _pod_shares(going: list[GroupCommit]) -> dict:
     return shares
 
 
+def _stock_split(deal: GroupDeal, commits: list[GroupCommit]) -> dict:
+    """Whole listing units for each order, adding up to exactly what the deal keeps
+    (all its shares rounded up once, in total). Shares of 2.5 lb: 7 bags keep 18 lb,
+    split 5 + 3 + 3 + 3 + 2 + 2, so a cancelled order gives back exactly its part."""
+    size = service.dec(deal.share_size)
+    exact = {c.id: size * c.units for c in commits}
+    split = {cid: math.floor(x) for cid, x in exact.items()}
+    left = math.ceil(sum(exact.values(), 0)) - sum(split.values())
+    for cid in sorted(exact, key=lambda k: exact[k] - split[k], reverse=True)[:left]:
+        split[cid] += 1
+    return split
+
+
 def _close_unlocked(db: Session, deal: GroupDeal, active: list[GroupCommit], now: datetime) -> tuple[list, list]:
     product = db.query(Product).filter(Product.id == deal.product_id).with_for_update().one()
     farmer = db.get(FarmerProfile, deal.farmer_id)
@@ -206,10 +221,13 @@ def _close_unlocked(db: Session, deal: GroupDeal, active: list[GroupCommit], now
         else:
             going.append(commit)
     shares = _pod_shares(going)
+    stock = _stock_split(deal, going)
     for commit in going:
         customer = db.get(CustomerProfile, commit.customer_id)
         is_member = commit.member_at_join or membership_service.has_member_benefits(db, commit.customer_id)
-        payment_ids.append(create_order_for(db, deal, product, farmer, commit, customer, is_member, delivery_fee=shares.get(commit.id)))
+        payment_ids.append(create_order_for(
+            db, deal, product, farmer, commit, customer, is_member, delivery_fee=shares.get(commit.id), stock_units=stock[commit.id]
+        ))
         claimed += commit.units
         notices.append(Notice(commit.customer_id, "deal_unlocked", context, f"deal_unlocked:{deal.id}:{commit.customer_id}"))
 

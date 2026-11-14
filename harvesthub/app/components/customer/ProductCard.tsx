@@ -8,7 +8,7 @@ import { QuantityStepper } from './QuantityStepper';
 
 type Props = {
   product: ProductItem;
-  pending: boolean;
+  pending?: boolean; // no longer locks the buttons: taps queue up (lib/useCartStepper.ts)
   onIncrement: () => void;
   onDecrement: () => void;
 };
@@ -19,7 +19,7 @@ const LOW_STOCK_THRESHOLD = 11;
 // List view: a menu-style row straight on the page background — details on
 // the left, the photo on the right with the add/quantity control floating on
 // it, and a hairline divider instead of a card box.
-export function ProductCard({ product, pending, onIncrement, onDecrement }: Props) {
+export function ProductCard({ product, onIncrement, onDecrement }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const outOfStock = product.quantity_available <= 0;
   const lowStock = !outOfStock && product.quantity_available < LOW_STOCK_THRESHOLD;
@@ -66,11 +66,12 @@ export function ProductCard({ product, pending, onIncrement, onDecrement }: Prop
         {!outOfStock ? (
           <View style={styles.stepper}>
             <QuantityStepper
+              name={product.name}
               quantity={product.cart_quantity}
               onIncrement={onIncrement}
               onDecrement={onDecrement}
-              canIncrement={!pending && !atMax}
-              canDecrement={!pending && product.cart_quantity > 0}
+              canIncrement={!atMax}
+              canDecrement={product.cart_quantity > 0}
             />
           </View>
         ) : null}

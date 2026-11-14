@@ -1,0 +1,77 @@
+# A customer finds a farm's promo code on its page, orders 2 kale and 1 jam for
+# pickup, applies the code and pays with Stripe's test card.
+# Expected: $15.00 - $1.50 promo + $0.75 service fee + $0.72 DC tax on the jam = $14.97.
+# Run through harvesthub/e2e/run_ui.py, which empties the cart first and checks
+# the database and Stripe afterwards.
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- scrollUntilVisible:
+    element: "ZZ Autotest Farm A"
+    direction: DOWN
+    centerElement: true
+- tapOn: "ZZ Autotest Farm A"
+- assertVisible: "10% off with code ZZTEST10"
+- assertVisible: "Enter it at checkout"
+
+# One product at a time through the farm's search, so its + is the only one on screen.
+- tapOn: "Search this farm's products"
+- inputText: "Kale"
+- hideKeyboard
+# Two quick taps: both count now (fix list item 1). The buttons have names (item 2).
+- tapOn: "Add ZZ Kale"
+- tapOn: "Add one more ZZ Kale"
+- extendedWaitUntil:
+    visible: "2 items"
+    timeout: 20000
+- tapOn: "Search this farm's products"
+- eraseText: 10
+- inputText: "Jam"
+- hideKeyboard
+- tapOn: "Add ZZ Strawberry Jam"
+- extendedWaitUntil:
+    visible: "3 items"
+    timeout: 15000
+- tapOn: "View Cart"
+
+- assertVisible: "Farm subtotal"
+- assertVisible: "\\$15.00"
+- tapOn: "Pickup"
+- tapOn: "Checkout at Once"
+
+- assertVisible: "Checkout"
+- assertVisible: "\\$16.55"
+- tapOn: "Promo code for this farm"
+- inputText: "zztest10"
+- hideKeyboard
+- tapOn: "Apply"
+- extendedWaitUntil:
+    visible: ".ZZTEST10. applied"
+    timeout: 15000
+- assertVisible: "-\\$1.50"
+- assertVisible: "\\$0.72"
+- assertVisible: "\\$14.97"
+
+- tapOn: "Card or Google Pay"
+- tapOn: "Place Order"
+- extendedWaitUntil:
+    visible: "Card"
+    timeout: 20000
+- tapOn: "Card"
+- tapOn: "Card number"
+- inputText: "4242424242424242"
+- inputText: "1234"
+- inputText: "123"
+- tapOn: "ZIP Code"
+- inputText: "22209"
+- hideKeyboard
+# Stripe's Pay button ("Pay $14.97") isn't exposed to automation: tap where it sits.
+- tapOn:
+    point: "50%,90%"
+- extendedWaitUntil:
+    visible: "Order placed! Here's your confirmation."
+    timeout: 45000
+- assertVisible: "Paid by card"
+- assertVisible: "Promo \\(ZZTEST10\\)"
+- takeScreenshot: customer_promo_order_done

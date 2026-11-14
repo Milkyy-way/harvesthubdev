@@ -107,11 +107,8 @@ export const customerSignupSchema = withMatchingPasswords(
       dietaryPreferences: z.array(z.enum(valuesOf(DIETARY_PREFERENCE_OPTIONS))),
       produceInterests: z.array(z.enum(valuesOf(PRODUCE_INTEREST_OPTIONS))),
       referralSource: z.enum(valuesOf(REFERRAL_SOURCE_OPTIONS)).optional(),
+      // Optional, like the question itself: "Other" with nothing typed is fine.
       referralSourceOther: z.string().trim().optional(),
-    })
-    .refine((data) => data.referralSource !== 'other' || !!data.referralSourceOther?.trim(), {
-      message: 'Tell us more about how you heard about us',
-      path: ['referralSourceOther'],
     })
 );
 
@@ -176,7 +173,7 @@ export const farmerVerificationSchema = z.object({
   insuranceExpirationDate: z
     .string()
     .trim()
-    .regex(DATE_RE, 'Use format YYYY-MM-DD')
+    .regex(DATE_RE, 'Enter the full date, like 06/30/2027')
     .refine((value) => new Date(value).getTime() > Date.now(), 'Insurance must not already be expired'),
   certifications: z.array(certificationEntrySchema),
   referencesText: z.string().trim().optional(),

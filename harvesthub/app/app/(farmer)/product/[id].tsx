@@ -17,7 +17,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiClient } from '../../../lib/apiClient';
 import { apiErrorMessage } from '../../../lib/apiError';
-import { pickFarmPhoto, uploadProductPhoto } from '../../../lib/farmerPhoto';
+import { chooseFarmPhoto, uploadProductPhoto } from '../../../lib/farmerPhoto';
 import { farmerProductSchema, flattenFieldErrors, type PickedFile } from '../../../lib/validation/schemas';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { TextField } from '../../../components/TextField';
@@ -115,7 +115,7 @@ export default function ProductEditor() {
 
   const handlePickPhoto = async () => {
     try {
-      const file = await pickFarmPhoto();
+      const file = await chooseFarmPhoto();
       if (file) setPhoto(file);
     } catch {
       setError('Could not open the photo picker. Try again.');

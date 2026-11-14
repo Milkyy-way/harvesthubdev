@@ -3,7 +3,7 @@ import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-nati
 import { Image } from 'expo-image';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { supabase } from '../../lib/supabase';
-import { pickFarmPhoto, uploadFarmPhoto } from '../../lib/farmerPhoto';
+import { chooseFarmPhoto, uploadFarmPhoto } from '../../lib/farmerPhoto';
 import { useAuth } from '../../contexts/AuthContext';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 
@@ -20,7 +20,7 @@ export function StorePhotoCard() {
     if (!session?.user || uploading) return;
     setError(null);
     try {
-      const file = await pickFarmPhoto();
+      const file = await chooseFarmPhoto();
       if (!file) return; // picker cancelled
       setUploading(true);
       const url = await uploadFarmPhoto(session.user.id, file);

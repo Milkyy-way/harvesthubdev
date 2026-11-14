@@ -1,0 +1,63 @@
+# A new customer signs up with email and password, using Google's address
+# suggestions, and lands on Home. Pass EMAIL and PASSWORD (a new email each run).
+appId: com.harvesthubmarket.app
+---
+- launchApp:
+    clearState: true
+- tapOn: "Sign up"
+- tapOn: "Customer"
+- assertVisible: "Your account details"
+- tapOn: "Full name"
+- inputText: "Autotest UI Customer"
+- hideKeyboard
+- tapOn: "Email"
+- inputText: ${EMAIL}
+- hideKeyboard
+- tapOn: "Phone number"
+- inputText: "2025550140"
+- hideKeyboard
+- tapOn: "Password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: "Confirm password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- scrollUntilVisible:
+    element: "Street address"
+    direction: DOWN
+- tapOn: "Street address"
+- inputText: "1600 Rhode Island"
+# With the keyboard still open, the suggestions are on screen (fix list item 22).
+- extendedWaitUntil:
+    visible: "1600 Rhode Island Avenue Northwest"
+    timeout: 20000
+- tapOn: "1600 Rhode Island Avenue Northwest"
+# The suggestion fills in the rest of the address, once Google answers.
+- extendedWaitUntil:
+    visible: "Washington"
+    timeout: 20000
+- scrollUntilVisible:
+    element: "20036"
+    direction: DOWN
+- scrollUntilVisible:
+    element: "Herbs"
+    direction: DOWN
+- tapOn: "Herbs"
+- scrollUntilVisible:
+    element: "Other"
+    direction: DOWN
+- tapOn: "Other"
+# Optional really is optional now (item 7): "Other" with nothing typed is fine.
+- scrollUntilVisible:
+    element: "Sign up"
+    direction: DOWN
+- tapOn: "Sign up"
+- extendedWaitUntil:
+    visible: "Not now"
+    timeout: 60000
+- assertVisible: "Your first 30 days of Harvest Pass are free"
+- tapOn: "Not now"
+- extendedWaitUntil:
+    visible: "Farmer spotlights"
+    timeout: 30000
+- takeScreenshot: customer_signup_done

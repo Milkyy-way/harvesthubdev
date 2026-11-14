@@ -20,7 +20,9 @@ def submit_rating(
     existing = get_rating_for_store_order(db, store_order_id)
     if existing:
         existing.rating = payload.rating
-        existing.comment = payload.comment
+        # Changing the stars without a comment keeps the comment already given.
+        if "comment" in payload.model_fields_set:
+            existing.comment = payload.comment
         existing.updated_at = datetime.utcnow()
         return existing
 

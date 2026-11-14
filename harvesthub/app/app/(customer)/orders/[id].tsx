@@ -43,10 +43,18 @@ export default function OrderDetailScreen() {
     }, [loadOrder])
   );
 
-  const confirmCancelStore = (storeOrderId: string, farmName: string) => {
-    Alert.alert('Cancel this farm’s order?', `${farmName} — if you already paid, this will be refunded.`, [
+  const confirmCancelStore = (storeOrder: StoreOrder) => {
+    const payment = order?.payment;
+    const paidByCard =
+      payment?.payment_method === 'card' && ['paid', 'ready_for_pickup'].includes(storeOrder.status) && payment.status === 'succeeded';
+    const money = paidByCard
+      ? `You'll get $${storeOrder.total.toFixed(2)} back on your card. Refunds usually show in 5–10 business days.`
+      : payment?.payment_method === 'cash_on_pickup'
+        ? "Nothing has been charged: you'd have paid in cash at pickup."
+        : "You haven't been charged for it.";
+    Alert.alert(`Cancel your ${storeOrder.farm_name} order?`, money, [
       { text: 'Keep it', style: 'cancel' },
-      { text: 'Cancel order', style: 'destructive', onPress: () => cancelStore(storeOrderId) },
+      { text: 'Cancel order', style: 'destructive', onPress: () => cancelStore(storeOrder.id) },
     ]);
   };
 
@@ -68,7 +76,14 @@ export default function OrderDetailScreen() {
   // (it lands on the farmer's payout ledger), so confirm before doing it.
   const confirmMarkReceived = (storeOrder: StoreOrder) => {
     if (order?.payment?.payment_method !== 'cash_on_pickup') {
-      markReceived(storeOrder.id);
+      Alert.alert(
+        'Picked up your order?',
+        `Only confirm once you have your ${storeOrder.farm_name} order. It can't be cancelled after this.`,
+        [
+          { text: 'Not yet', style: 'cancel' },
+          { text: 'Yes, I have it', onPress: () => markReceived(storeOrder.id) },
+        ]
+      );
       return;
     }
     Alert.alert(
@@ -95,15 +110,17 @@ export default function OrderDetailScreen() {
     }
   };
 
-  const rateStore = async (storeOrderId: string, rating: number) => {
-    if (!order) return;
+  const rateStore = async (storeOrderId: string, rating: number, comment?: string): Promise<boolean> => {
+    if (!order) return false;
     setRatingStoreOrderId(storeOrderId);
     try {
-      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${storeOrderId}/rating`, { rating });
+      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${storeOrderId}/rating`, { rating, comment: comment || undefined });
       setOrder(res.data);
+      return true;
     } catch (err: any) {
       console.warn('Could not submit rating:', err);
       Alert.alert('Could not submit rating', err?.response?.data?.detail ?? 'Please try again.');
+      return false;
     } finally {
       setRatingStoreOrderId(null);
     }
@@ -186,7 +203,7 @@ export default function OrderDetailScreen() {
                 <Text style={styles.summaryPayment}>
                   {order.payment.charged_at_cutoff && !paymentSettled(order.payment.status)
                     ? 'Card charged when orders close'
-                    : `${order.payment.payment_method === 'cash_on_pickup' ? 'Cash on pickup' : 'Paid by card'} · ${order.payment.status}`}
+                    : paymentLine(order)}
                 </Text>
               ) : null}
             </View>
@@ -200,9 +217,9 @@ export default function OrderDetailScreen() {
             paymentStatus={order.payment?.status}
             paymentFailure={order.payment?.failure_reason}
             busy={busyStoreOrderId === storeOrder.id}
-            onCancel={() => confirmCancelStore(storeOrder.id, storeOrder.farm_name)}
+            onCancel={() => confirmCancelStore(storeOrder)}
             onMarkReceived={() => confirmMarkReceived(storeOrder)}
-            onRate={(rating) => rateStore(storeOrder.id, rating)}
+            onRate={(rating, comment) => rateStore(storeOrder.id, rating, comment)}
             ratingBusy={ratingStoreOrderId === storeOrder.id}
             onDeliveryUpdate={loadOrder}
           />
@@ -224,6 +241,32 @@ export default function OrderDetailScreen() {
 }
 
 // A pod order that has been charged, or never will be, reads like any other.
+// "Paid by card", "Refunded $3.68 to your card", "Paid by card · $5.00 refunded"...
+function paymentLine(order: Order): string {
+  const payment = order.payment!;
+  if (payment.payment_method === 'cash_on_pickup') {
+    return payment.status === 'succeeded' ? 'Paid in cash at pickup' : payment.status === 'canceled' ? 'Cancelled' : 'Cash on pickup';
+  }
+  const refunded = order.store_orders.reduce((sum, so) => sum + so.refunded_amount, 0);
+  if (refunded > 0) {
+    return refunded >= payment.amount - 0.005
+      ? `Refunded $${refunded.toFixed(2)} to your card`
+      : `Paid by card · $${refunded.toFixed(2)} refunded`;
+  }
+  switch (payment.status) {
+    case 'succeeded':
+      return 'Paid by card';
+    case 'processing':
+      return 'Card payment processing';
+    case 'canceled':
+      return 'Payment cancelled';
+    case 'charge_failed':
+      return 'Card declined';
+    default:
+      return 'Not paid yet';
+  }
+}
+
 function paymentSettled(status: string): boolean {
   return status === 'succeeded' || status === 'canceled';
 }
@@ -257,7 +300,7 @@ const styles = StyleSheet.create({
   summary: { marginHorizontal: spacing.lg, marginBottom: spacing.md },
   summaryLabel: { fontSize: 13, color: colors.textMuted },
   summaryTotal: { fontFamily: fonts.headlineBold, fontSize: 32, color: colors.text, marginTop: 2 },
-  summaryPayment: { fontSize: 12, color: colors.textMuted, marginTop: 2, textTransform: 'capitalize' },
+  summaryPayment: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   cancelWholeButton: {
     borderWidth: 1,
     borderColor: colors.danger,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +26,7 @@ export default function SignupDetails() {
   const { role } = useLocalSearchParams<{ role: UserRole }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const scroll = useRef<ScrollView>(null);
 
   const [customerValues, setCustomerValues] = useState<CustomerFormValues>(initialCustomerFormValues);
   const [farmerValues, setFarmerValues] = useState<FarmerAccountFormValues>(initialFarmerAccountFormValues);
@@ -163,9 +164,15 @@ export default function SignupDetails() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+    // The status bar gets a solid strip of its own, so the form scrolls under
+    // it instead of under the clock and battery icons.
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[styles.screen, { paddingTop: insets.top }]}
+    >
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.md }]}
+        ref={scroll}
+        contentContainerStyle={[styles.container, { paddingTop: spacing.md }]}
         keyboardShouldPersistTaps="handled"
       >
         <Pressable style={styles.back} onPress={() => router.back()} hitSlop={12}>
@@ -174,7 +181,7 @@ export default function SignupDetails() {
 
         <Text style={styles.title}>{role === 'farmer' ? 'Farm account details' : 'Your account details'}</Text>
         <Text style={styles.subtitle}>
-          {role === 'farmer' ? 'Step 2 of 2 — farmer account' : 'Step 2 of 2 — customer account'}
+          {role === 'farmer' ? 'Step 2 of 4 — farmer account' : 'Step 2 of 2 — customer account'}
         </Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -223,7 +230,14 @@ export default function SignupDetails() {
               <View style={styles.dividerLine} />
             </View>
 
-            <CustomerFields value={customerValues} onChange={updateCustomer} errors={fieldErrors} />
+            <CustomerFields
+              value={customerValues}
+              onChange={updateCustomer}
+              errors={fieldErrors}
+              // Bring the street box to the top, above the keyboard, so what's
+              // typed and Google's suggestions under it can be seen.
+              onAddressFocus={(y) => setTimeout(() => scroll.current?.scrollTo({ y: Math.max(y - spacing.md, 0), animated: true }), 150)}
+            />
           </>
         ) : (
           <>
@@ -248,6 +262,7 @@ export default function SignupDetails() {
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
   container: { flexGrow: 1, backgroundColor: colors.background, paddingHorizontal: spacing.lg, paddingVertical: spacing.lg },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginLeft: -spacing.sm, marginBottom: spacing.sm },
   title: { fontFamily: fonts.headlineBold, fontSize: 22, color: colors.text, marginBottom: spacing.sm },

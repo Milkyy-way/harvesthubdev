@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import type { StoreOrder } from '../../types/orders';
 import { RatingStars } from './RatingStars';
+import { TextField } from '../TextField';
 import { DeliveryTracker } from './DeliveryTracker';
 import { PodChargeCard } from './PodChargeCard';
 
@@ -15,7 +17,8 @@ type Props = {
   busy: boolean;
   onCancel: () => void;
   onMarkReceived: () => void;
-  onRate: (rating: number) => void;
+  /** Resolves true once the rating (and comment) is saved. */
+  onRate: (rating: number, comment?: string) => Promise<boolean>;
   ratingBusy: boolean;
   onDeliveryUpdate?: () => void; // the delivery moved on — reload the order
 };
@@ -51,6 +54,8 @@ export function OrderStoreSection({
   ratingBusy,
   onDeliveryUpdate,
 }: Props) {
+  const [comment, setComment] = useState('');
+  const [commentSent, setCommentSent] = useState(false);
   const isDelivery = storeOrder.fulfillment_method === 'delivery';
   const addressLine =
     storeOrder.fulfillment_method === 'pickup'
@@ -177,6 +182,9 @@ export function OrderStoreSection({
         <View style={styles.divider} />
         <BreakdownLine label={beforeCharge ? 'The most you\'d pay' : 'Total'} value={storeOrder.total} bold />
         {storeOrder.refunded_amount > 0 ? <BreakdownLine label="Refunded" value={-storeOrder.refunded_amount} highlight /> : null}
+        {storeOrder.refunded_amount > 0 && !paysAtPickup ? (
+          <Text style={styles.refundNote}>Refunds usually show on your card in 5–10 business days.</Text>
+        ) : null}
       </View>
 
       {storeOrder.status === 'cancelled' && storeOrder.cancelled_by === 'farmer' ? (
@@ -203,10 +211,35 @@ export function OrderStoreSection({
           {ratingBusy ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <RatingStars value={storeOrder.my_rating ?? 0} onSelect={onRate} size={20} />
+            <RatingStars value={storeOrder.my_rating ?? 0} onSelect={(rating) => onRate(rating)} size={30} />
           )}
         </View>
       ) : null}
+      {storeOrder.status === 'completed' && storeOrder.my_rating && !commentSent ? (
+        <View style={styles.commentRow}>
+          <TextField
+            label="Add a comment (optional)"
+            placeholder="What did you like, or what could be better?"
+            value={comment}
+            onChangeText={setComment}
+            multiline
+            maxLength={500}
+          />
+          {comment.trim() ? (
+            <Pressable
+              style={styles.commentButton}
+              onPress={async () => {
+                // Only once it's saved: if it fails, the box stays with the text in it.
+                if (await onRate(storeOrder.my_rating!, comment.trim())) setCommentSent(true);
+              }}
+              disabled={ratingBusy}
+            >
+              <Text style={styles.commentButtonText}>Send comment</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {commentSent ? <Text style={styles.hint}>Thanks, your comment was sent to the farm.</Text> : null}
 
       {canCancel || canMarkReceived ? (
         <View style={styles.actionsRow}>
@@ -299,6 +332,18 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   ratingLabel: { fontSize: 13, fontWeight: '600', color: colors.text },
+  refundNote: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  commentRow: { marginTop: spacing.sm },
+  commentButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radius.pill,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: -spacing.sm,
+  },
+  commentButtonText: { fontSize: 13, fontWeight: '700', color: colors.primary },
   note: { fontSize: 12.5, lineHeight: 18, color: colors.danger, marginTop: spacing.sm },
   hint: { fontSize: 12.5, lineHeight: 18, color: colors.textMuted, marginTop: spacing.sm },
   actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },

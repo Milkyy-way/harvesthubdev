@@ -1,0 +1,97 @@
+# A new farmer signs up, fills in farm details (with Google's address
+# suggestions) and uploads the 4 required documents from the phone's files.
+# Pass EMAIL, PASSWORD and FARM. Needs autotest-photo.png in the phone's
+# Downloads (run_ui.py puts it there).
+appId: com.harvesthubmarket.app
+---
+- launchApp:
+    clearState: true
+- tapOn: "Sign up"
+- tapOn: "Farmer"
+- assertVisible: "Farm account details"
+- assertVisible: "Step 2 of 4.*"
+- tapOn: "Farm or business name"
+- inputText: ${FARM}
+- hideKeyboard
+- tapOn: "Owner or contact.s full name"
+- inputText: "Autotest UI Farmer"
+- hideKeyboard
+- tapOn: "Email"
+- inputText: ${EMAIL}
+- hideKeyboard
+- tapOn: "Phone number"
+- inputText: "2025550141"
+- hideKeyboard
+- tapOn: "Password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: "Confirm password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: "Sign up"
+
+# Step 1: farm details.
+- extendedWaitUntil:
+    visible: "Tell us about your farm"
+    timeout: 60000
+- assertVisible: "Step 3 of 4.*"
+- assertVisible: "Customers see your farm.s address.*"
+- tapOn: "Farm street address"
+- inputText: "4200 Wisconsin Ave"
+- extendedWaitUntil:
+    visible: "4200 Wisconsin Avenue Northwest, Washington, DC, USA"
+    timeout: 20000
+- tapOn: "4200 Wisconsin Avenue Northwest, Washington, DC, USA"
+# The rest of the address fills in once Google answers.
+- extendedWaitUntil:
+    visible: "20016"
+    timeout: 20000
+- tapOn: "Produce"
+- tapOn: "Years in operation"
+- inputText: "7"
+- hideKeyboard
+- tapOn: "Tax ID / EIN"
+- inputText: "123456789"
+- hideKeyboard
+- scrollUntilVisible:
+    element: "Continue"
+    direction: DOWN
+- tapOn: "Continue"
+
+# Step 2: documents.
+- extendedWaitUntil:
+    visible: "Business license number"
+    timeout: 30000
+# Builds before fix list item 23 open this step halfway down: scroll up to its heading.
+- scrollUntilVisible:
+    element: "Verification documents"
+    direction: UP
+- assertVisible: "Step 4 of 4.*"
+- tapOn: "Business license number"
+- inputText: "BL-UI-0001"
+- hideKeyboard
+- runFlow:
+    file: subflows/attach_photo.yaml
+- runFlow:
+    file: subflows/attach_photo.yaml
+- scrollUntilVisible:
+    element: "Insurance expiration date"
+    direction: DOWN
+- tapOn: "Insurance expiration date"
+# Just the digits: the slashes fill in by themselves (item 13).
+- inputText: "06302027"
+- hideKeyboard
+- assertVisible: "06/30/2027"
+- runFlow:
+    file: subflows/attach_photo.yaml
+- runFlow:
+    file: subflows/attach_photo.yaml
+- scrollUntilVisible:
+    element: "Submit application"
+    direction: DOWN
+- tapOn: "Submit application"
+- extendedWaitUntil:
+    visible: "Application under review"
+    timeout: 90000
+- assertVisible: "Your ${FARM} application"
+- takeScreenshot: farmer_application_submitted

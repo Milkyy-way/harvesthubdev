@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, Keyboard, ActivityIndicator, StyleSheet } from 'react-native';
+import { useEffect, useRef, useState, type Ref } from 'react';
+import { View, Text, Pressable, Keyboard, ActivityIndicator, StyleSheet, type TextInput } from 'react-native';
 import { isCancel } from 'axios';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../constants/theme';
@@ -20,6 +20,13 @@ type Props = {
   onSelectAddress: (address: AddressParts) => void;
   placeholder?: string;
   error?: string | null;
+  label?: string;
+  // The form scrolls the box to the top when it's focused, so the keyboard
+  // doesn't hide it or its suggestions.
+  onFocus?: () => void;
+  ref?: Ref<TextInput>;
+  returnKeyType?: 'next' | 'done';
+  onSubmitEditing?: () => void;
 };
 
 // The street-address box, with real addresses suggested as you type (Google
@@ -28,7 +35,18 @@ type Props = {
 // Without suggestions (API not set up, or offline) it's a plain text box. The
 // parent ScrollView needs keyboardShouldPersistTaps="handled", or the first
 // tap on a suggestion only closes the keyboard.
-export function AddressSearchField({ value, onChangeText, onSelectAddress, placeholder = 'Street address', error }: Props) {
+export function AddressSearchField({
+  value,
+  onChangeText,
+  onSelectAddress,
+  placeholder = 'Street address',
+  error,
+  label,
+  onFocus,
+  ref,
+  returnKeyType,
+  onSubmitEditing,
+}: Props) {
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState<string | null>(null);
@@ -91,9 +109,15 @@ export function AddressSearchField({ value, onChangeText, onSelectAddress, place
   return (
     <View>
       <TextField
+        ref={ref}
+        label={label}
         placeholder={placeholder}
         value={value}
         onChangeText={handleChange}
+        onFocus={onFocus}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
+        submitBehavior={returnKeyType === 'next' ? 'submit' : undefined}
         onBlur={() => {
           // Late enough that a tap on a suggestion still lands.
           blurTimer.current = setTimeout(() => setOpen(false), 200);

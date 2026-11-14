@@ -1,0 +1,27 @@
+# A customer cancels a paid order (placed by run_ui.py) and sees it refunded.
+# Pass EMAIL, PASSWORD and FARM.
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- tapOn: "Orders"
+- extendedWaitUntil:
+    visible: ${FARM}
+    timeout: 30000
+- tapOn: ${FARM}
+- extendedWaitUntil:
+    visible: "Cancel"
+    timeout: 20000
+- tapOn: "Cancel"
+# Says what happens to the money (item 20).
+- assertVisible: "Cancel your .* order\\?"
+- assertVisible: "You.ll get \\$.* back on your card.*"
+- tapOn: "CANCEL ORDER"
+- extendedWaitUntil:
+    visible: "Refunded"
+    timeout: 30000
+- assertVisible: "Cancelled"
+# The top says it was refunded, and when it shows (item 21).
+- assertVisible: "Refunded \\$.* to your card"
+- assertVisible: "Refunds usually show on your card.*"
+- takeScreenshot: customer_cancel_done

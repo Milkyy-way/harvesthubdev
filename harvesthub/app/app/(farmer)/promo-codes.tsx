@@ -171,8 +171,14 @@ export default function PromoCodesScreen() {
         {creating ? (
           <View style={styles.form}>
             <Text style={styles.sectionTitle}>New promo code</Text>
-            <Text style={styles.fieldLabel}>Code</Text>
-            <TextField value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} placeholder="SPRING10" />
+            <TextField
+              label="Code"
+              value={code}
+              onChangeText={setCode}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              placeholder="e.g. SPRING10"
+            />
             <Text style={styles.hint}>3 to 20 letters and numbers, no spaces.</Text>
 
             <Text style={styles.fieldLabel}>Discount</Text>
@@ -182,30 +188,27 @@ export default function PromoCodesScreen() {
             </View>
             <View style={styles.row}>
               <View style={styles.flex1}>
-                <Text style={styles.subLabel}>{discountType === 'percentage' ? 'Percent off (1 to 90)' : 'Dollars off'}</Text>
                 <TextField
+                  label={discountType === 'percentage' ? 'Percent off (1 to 90)' : 'Dollars off'}
                   value={amount}
                   onChangeText={setAmount}
                   keyboardType="decimal-pad"
-                  placeholder={discountType === 'percentage' ? '10' : '5.00'}
+                  placeholder={discountType === 'percentage' ? 'e.g. 10' : 'e.g. 5.00'}
                 />
               </View>
               {discountType === 'percentage' ? (
                 <View style={styles.flex1}>
-                  <Text style={styles.subLabel}>Most off, $ (optional)</Text>
-                  <TextField value={maxOff} onChangeText={setMaxOff} keyboardType="decimal-pad" placeholder="No limit" />
+                  <TextField label="Most off, $ (optional)" value={maxOff} onChangeText={setMaxOff} keyboardType="decimal-pad" placeholder="No limit" />
                 </View>
               ) : null}
             </View>
 
             <View style={styles.row}>
               <View style={styles.flex1}>
-                <Text style={styles.subLabel}>Minimum order, $ (optional)</Text>
-                <TextField value={minOrder} onChangeText={setMinOrder} keyboardType="decimal-pad" placeholder="None" />
+                <TextField label="Minimum order, $ (optional)" value={minOrder} onChangeText={setMinOrder} keyboardType="decimal-pad" placeholder="None" />
               </View>
               <View style={styles.flex1}>
-                <Text style={styles.subLabel}>Total uses (optional)</Text>
-                <TextField value={usageLimit} onChangeText={setUsageLimit} keyboardType="number-pad" placeholder="No limit" />
+                <TextField label="Total uses (optional)" value={usageLimit} onChangeText={setUsageLimit} keyboardType="number-pad" placeholder="No limit" />
               </View>
             </View>
 
@@ -377,7 +380,6 @@ const styles = StyleSheet.create({
   sectionTitle: { fontFamily: fonts.headline, fontSize: 19, color: colors.text, marginTop: spacing.lg, marginBottom: spacing.sm },
   form: { backgroundColor: colors.tint, borderRadius: radius.md, padding: spacing.md, paddingTop: 0 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: spacing.xs, marginTop: spacing.xs },
-  subLabel: { fontSize: 12, fontWeight: '600', color: colors.textMuted, marginTop: spacing.sm, marginBottom: spacing.xs },
   hint: { fontSize: 12, lineHeight: 17, color: colors.textMuted, marginTop: -spacing.sm, marginBottom: spacing.sm },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.xs },
   chip: {

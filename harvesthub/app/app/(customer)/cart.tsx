@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../constants/theme';
+import { useCartStepper } from '../../lib/useCartStepper';
 import { apiClient } from '../../lib/apiClient';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCheckoutDraft } from '../../contexts/CheckoutDraftContext';
@@ -108,21 +109,25 @@ export default function CartScreen() {
     [pendingProductId, loadCart]
   );
 
-  const handleIncrement = (farmerId: string, productId: string, currentQty: number) =>
-    applyCartAction(
-      productId,
-      farmerId,
-      () => apiClient.post<CartActionResponse>(`/cart/items/${productId}/increment`),
-      currentQty + 1
-    );
-
-  const handleDecrement = (farmerId: string, productId: string, currentQty: number) =>
-    applyCartAction(
-      productId,
-      farmerId,
-      () => apiClient.post<CartActionResponse>(`/cart/items/${productId}/decrement`),
-      Math.max(0, currentQty - 1)
-    );
+  // + and − queue up per product instead of being dropped while one is saving.
+  const showQuantity = useCallback(
+    (productId: string, quantity: number) =>
+      setCart((prev) => {
+        const farm = prev?.farms.find((f) => f.items.some((i) => i.product_id === productId));
+        return farm ? optimisticUpdate(prev, farm.farmer_id, productId, quantity) : prev;
+      }),
+    []
+  );
+  const { step } = useCartStepper({
+    onShow: showQuantity,
+    onSettled: showQuantity,
+    onError: (_productId, err) => {
+      console.warn('Cart update failed:', err);
+      loadCart();
+    },
+  });
+  const handleIncrement = (productId: string, currentQty: number, available: number) => step(productId, currentQty, 1, available);
+  const handleDecrement = (productId: string, currentQty: number) => step(productId, currentQty, -1);
 
   const handleRemove = (farmerId: string, productId: string) =>
     applyCartAction(productId, farmerId, () => apiClient.delete<CartActionResponse>(`/cart/items/${productId}`), 0);
@@ -186,11 +191,11 @@ export default function CartScreen() {
             pendingProductId={pendingProductId}
             onIncrement={(productId) => {
               const item = farm.items.find((i) => i.product_id === productId);
-              handleIncrement(farm.farmer_id, productId, item?.quantity ?? 0);
+              handleIncrement(productId, item?.quantity ?? 0, item?.quantity_available ?? Number.MAX_SAFE_INTEGER);
             }}
             onDecrement={(productId) => {
               const item = farm.items.find((i) => i.product_id === productId);
-              handleDecrement(farm.farmer_id, productId, item?.quantity ?? 0);
+              handleDecrement(productId, item?.quantity ?? 0);
             }}
             onRemove={(productId) => handleRemove(farm.farmer_id, productId)}
             method={fulfillmentByFarm[farm.farmer_id]?.method ?? null}

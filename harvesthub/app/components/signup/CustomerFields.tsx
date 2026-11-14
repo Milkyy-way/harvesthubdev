@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { useRef } from 'react';
+import { View, Text, StyleSheet, type TextInput } from 'react-native';
 import { TextField } from '../TextField';
 import { AddressSearchField } from '../AddressSearchField';
 import { TagSelector } from '../TagSelector';
@@ -49,88 +50,142 @@ type Props = {
   value: CustomerFormValues;
   onChange: (patch: Partial<CustomerFormValues>) => void;
   errors: Record<string, string>;
+  // The street box got focus: the screen scrolls it (with its y) to the top,
+  // so the keyboard doesn't hide it or Google's suggestions under it.
+  onAddressFocus?: (y: number) => void;
 };
 
-export function CustomerFields({ value, onChange, errors }: Props) {
+export function CustomerFields({ value, onChange, errors, onAddressFocus }: Props) {
+  // Enter on the keyboard moves to the next box.
+  const email = useRef<TextInput>(null);
+  const phone = useRef<TextInput>(null);
+  const password = useRef<TextInput>(null);
+  const confirm = useRef<TextInput>(null);
+  const street = useRef<TextInput>(null);
+  const unit = useRef<TextInput>(null);
+  const city = useRef<TextInput>(null);
+  const state = useRef<TextInput>(null);
+  const zip = useRef<TextInput>(null);
+  const addressY = useRef(0);
+  const next = (ref: { current: TextInput | null }) => ({
+    returnKeyType: 'next' as const,
+    submitBehavior: 'submit' as const,
+    onSubmitEditing: () => ref.current?.focus(),
+  });
+
   return (
     <>
       <TextField
-        placeholder="Full name"
+        label="Full name"
+        placeholder="e.g. Jordan Lee"
+        autoComplete="name"
         value={value.fullName}
         onChangeText={(fullName) => onChange({ fullName })}
         error={errors.fullName}
+        {...next(email)}
       />
       <TextField
-        placeholder="Email"
+        ref={email}
+        label="Email"
+        placeholder="you@example.com"
         autoCapitalize="none"
         autoComplete="email"
         keyboardType="email-address"
         value={value.email}
         onChangeText={(email) => onChange({ email })}
         error={errors.email}
+        {...next(phone)}
       />
       <TextField
-        placeholder="Phone number"
+        ref={phone}
+        label="Phone number"
+        placeholder="e.g. 202 555 0123"
         autoComplete="tel"
         keyboardType="phone-pad"
         value={value.phone}
         onChangeText={(phone) => onChange({ phone })}
         error={errors.phone}
+        {...next(password)}
       />
       <TextField
-        placeholder="Password (min 8 characters)"
+        ref={password}
+        label="Password"
+        placeholder="At least 8 characters"
         secureTextEntry
         autoComplete="password-new"
         value={value.password}
         onChangeText={(password) => onChange({ password })}
         error={errors.password}
+        {...next(confirm)}
       />
       <TextField
-        placeholder="Confirm password"
+        ref={confirm}
+        label="Confirm password"
+        placeholder="Type it again"
         secureTextEntry
         autoComplete="password-new"
         value={value.confirmPassword}
         onChangeText={(confirmPassword) => onChange({ confirmPassword })}
         error={errors.confirmPassword}
+        {...next(street)}
       />
 
-      <Text style={styles.sectionTitle}>Delivery / pickup address</Text>
-      <AddressSearchField
-        value={value.addressStreet}
-        onChangeText={(addressStreet) => onChange({ addressStreet })}
-        onSelectAddress={(a) => {
-          const { street, unit } = splitUnit(a.street);
-          onChange({ addressStreet: street, addressUnit: unit, addressCity: a.city, addressState: a.state, addressZip: a.zip });
-        }}
-        error={errors.addressStreet}
-      />
+      <View onLayout={(e) => (addressY.current = e.nativeEvent.layout.y)}>
+        <Text style={styles.sectionTitle}>Delivery / pickup address</Text>
+        <AddressSearchField
+          ref={street}
+          label="Street address"
+          placeholder="Start typing, then pick your address"
+          value={value.addressStreet}
+          onChangeText={(addressStreet) => onChange({ addressStreet })}
+          onSelectAddress={(a) => {
+            const { street, unit } = splitUnit(a.street);
+            onChange({ addressStreet: street, addressUnit: unit, addressCity: a.city, addressState: a.state, addressZip: a.zip });
+          }}
+          onFocus={() => onAddressFocus?.(addressY.current)}
+          error={errors.addressStreet}
+          returnKeyType="next"
+          onSubmitEditing={() => unit.current?.focus()}
+        />
+      </View>
       <TextField
-        placeholder="Apt, suite or unit (optional)"
+        ref={unit}
+        label="Apt, suite or unit (optional)"
+        placeholder="e.g. Apt 4B"
         value={value.addressUnit}
         onChangeText={(addressUnit) => onChange({ addressUnit })}
         error={errors.addressUnit}
+        {...next(city)}
       />
       <TextField
-        placeholder="City"
+        ref={city}
+        label="City"
         value={value.addressCity}
         onChangeText={(addressCity) => onChange({ addressCity })}
         error={errors.addressCity}
+        {...next(state)}
       />
       <View style={styles.row}>
         <TextField
+          ref={state}
           style={styles.flex1}
-          placeholder="State"
+          label="State"
+          placeholder="DC"
+          autoCapitalize="characters"
           value={value.addressState}
           onChangeText={(addressState) => onChange({ addressState })}
           error={errors.addressState}
+          {...next(zip)}
         />
         <TextField
+          ref={zip}
           style={styles.flex1}
-          placeholder="ZIP code"
+          label="ZIP code"
           keyboardType="number-pad"
           value={value.addressZip}
           onChangeText={(addressZip) => onChange({ addressZip })}
           error={errors.addressZip}
+          returnKeyType="done"
         />
       </View>
 
@@ -157,7 +212,8 @@ export function CustomerFields({ value, onChange, errors }: Props) {
       />
       {value.referralSource[0] === 'other' ? (
         <TextField
-          placeholder="Tell us more"
+          label="Tell us more (optional)"
+          placeholder="Where did you hear about HarvestHub?"
           value={value.referralSourceOther}
           onChangeText={(referralSourceOther) => onChange({ referralSourceOther })}
           error={errors.referralSourceOther}

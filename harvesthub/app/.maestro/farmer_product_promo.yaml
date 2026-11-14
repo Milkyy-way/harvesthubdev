@@ -1,0 +1,81 @@
+# An approved farmer adds a product with a photo, then makes a promo code,
+# pauses it and turns it back on. Pass EMAIL, PASSWORD, FARM, PRODUCT and CODE.
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- extendedWaitUntil:
+    visible: "${FARM} is open for business on HarvestHub."
+    timeout: 30000
+# A new farm is pointed at its first product (item 14).
+- assertVisible: "Add your first product"
+
+# A product with a photo.
+- tapOn: "Products"
+- tapOn: "Add product"
+- tapOn: "Add a photo"
+# Take a photo, or choose one (item 15).
+- extendedWaitUntil:
+    visible: "(?i)take photo"
+    timeout: 10000
+- tapOn: "(?i)choose from library"
+- extendedWaitUntil:
+    visible: "autotest-photo\\.png.*"
+    timeout: 20000
+- tapOn: "autotest-photo\\.png.*"
+- extendedWaitUntil:
+    visible: "Change photo"
+    timeout: 30000
+- tapOn: "Product name \\(e\\.g\\. Heirloom tomatoes\\)"
+- inputText: ${PRODUCT}
+- hideKeyboard
+- tapOn: "Vegetables"
+- tapOn: "Price \\(\\$\\)"
+- inputText: "3.25"
+- hideKeyboard
+- tapOn: "How many available"
+- inputText: "40"
+- hideKeyboard
+- tapOn: "lb"
+- scrollUntilVisible:
+    element: "Visible to customers"
+    direction: DOWN
+- tapOn:
+    text: "Add product"
+    below:
+      text: "Visible to customers"
+- extendedWaitUntil:
+    visible: ${PRODUCT}
+    timeout: 30000
+- assertVisible: "\\$3\\.25 / lb.*"
+
+# A promo code: 15% off for 2 weeks, shown on the farm page.
+- tapOn: "Account"
+- tapOn: "Promo codes"
+- tapOn: "New promo code"
+- assertVisible: "e\\.g\\. SPRING10"
+- tapOn: "Code"
+- inputText: ${CODE}
+- hideKeyboard
+- tapOn: "Percent off \\(1 to 90\\)"
+- inputText: "15"
+- hideKeyboard
+- tapOn: "2 weeks"
+- scrollUntilVisible:
+    element: "Create code"
+    direction: DOWN
+- tapOn: "Create code"
+- extendedWaitUntil:
+    visible: ${CODE}
+    timeout: 20000
+- assertVisible: "Live"
+- assertVisible: "15% off"
+- tapOn: "Pause"
+- extendedWaitUntil:
+    visible: "Paused"
+    timeout: 15000
+- tapOn: "Turn back on"
+- extendedWaitUntil:
+    visible: "Live"
+    timeout: 15000
+- takeScreenshot: farmer_product_promo_done

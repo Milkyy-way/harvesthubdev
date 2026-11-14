@@ -32,25 +32,38 @@ export function CartLineItemRow({ item, pending, onIncrement, onDecrement, onRem
 
       <View style={styles.stepper}>
         <Pressable
-          style={[styles.stepperButton, pending && styles.stepperButtonDisabled]}
+          style={styles.stepperButton}
           onPress={onDecrement}
-          disabled={pending}
           hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={item.quantity === 1 ? `Remove ${item.name} from cart` : `Remove one ${item.name}`}
         >
           <MaterialIcons name="remove" size={16} color={colors.primary} />
         </Pressable>
-        <Text style={styles.stepperValue}>{item.quantity}</Text>
+        <Text style={styles.stepperValue} accessibilityLabel={`${item.quantity} ${item.name} in cart`}>
+          {item.quantity}
+        </Text>
         <Pressable
-          style={[styles.stepperButton, (pending || atMax) && styles.stepperButtonDisabled]}
+          style={[styles.stepperButton, atMax && styles.stepperButtonDisabled]}
           onPress={onIncrement}
-          disabled={pending || atMax}
+          disabled={atMax}
           hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Add one more ${item.name}`}
+          accessibilityState={{ disabled: atMax }}
         >
           <MaterialIcons name="add" size={16} color={colors.primary} />
         </Pressable>
       </View>
 
-      <Pressable style={styles.removeButton} onPress={onRemove} disabled={pending} hitSlop={8}>
+      <Pressable
+        style={styles.removeButton}
+        onPress={onRemove}
+        disabled={pending}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${item.name} from cart`}
+      >
         <MaterialIcons name="delete-outline" size={18} color={colors.textMuted} />
       </Pressable>
     </View>

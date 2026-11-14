@@ -1,0 +1,21 @@
+# Log in with email and password from a fresh start. Pass EMAIL and PASSWORD.
+appId: com.harvesthubmarket.app
+---
+- launchApp:
+    clearState: true
+- tapOn: "Log in"
+- tapOn: "Email"
+- inputText: ${EMAIL}
+- tapOn: "Password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: "Log in"
+# A customer's first sign-in on a phone offers the free Harvest Pass month.
+- extendedWaitUntil:
+    visible: "Not now|Home|Orders"
+    timeout: 60000
+- runFlow:
+    when:
+      visible: "Not now"
+    commands:
+      - tapOn: "Not now"

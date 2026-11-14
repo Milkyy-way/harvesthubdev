@@ -1,0 +1,19 @@
+# A farmer sees a paid order (placed by run_ui.py) with the customer's name and
+# phone and the earnings at 10%, and marks it ready for pickup.
+# Pass EMAIL, PASSWORD, CUSTOMER (the customer's name) and EARNINGS (like "\\$5\\.85").
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- tapOn: "Orders"
+- extendedWaitUntil:
+    visible: ${CUSTOMER}
+    timeout: 30000
+- assertVisible: "Paid by card"
+- assertVisible: "Your earnings \\(est\\.\\)"
+- assertVisible: ${EARNINGS}
+- tapOn: "Mark ready for pickup"
+- extendedWaitUntil:
+    visible: "Nothing in .To prepare."
+    timeout: 20000
+- takeScreenshot: farmer_mark_ready_done

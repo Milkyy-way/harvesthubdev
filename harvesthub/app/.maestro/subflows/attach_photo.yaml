@@ -1,0 +1,16 @@
+# Attach autotest-photo.png to the next empty "Choose file" slot, through
+# Android's file picker.
+appId: com.harvesthubmarket.app
+---
+- scrollUntilVisible:
+    element: "Choose file"
+    direction: DOWN
+- tapOn: "Choose file"
+- extendedWaitUntil:
+    visible: "autotest-photo.png"
+    timeout: 20000
+- tapOn: "autotest-photo.png"
+# Back in the app, the slot shows the file's name and a Remove link.
+- extendedWaitUntil:
+    visible: "Remove"
+    timeout: 30000

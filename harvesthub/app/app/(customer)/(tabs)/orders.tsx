@@ -96,7 +96,7 @@ export default function CustomerOrders() {
 
   return (
     <View style={styles.container}>
-      <HeroShell headline="Explore your order activity">
+      <HeroShell headline="Your orders">
         <DateRangeFilter value={range} onChange={handleChangeRange} />
       </HeroShell>
 

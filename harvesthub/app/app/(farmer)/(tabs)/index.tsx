@@ -20,6 +20,7 @@ export default function FarmerHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [earnings, setEarnings] = useState<FarmerEarnings | null>(null);
   const [runs, setRuns] = useState<RunsResponse | null>(null);
+  const [productCount, setProductCount] = useState<number | null>(null);
 
   const firstName = profile?.full_name?.trim().split(' ')[0];
   const farmName = farmerProfile?.farm_name ?? 'your farm';
@@ -28,12 +29,14 @@ export default function FarmerHome() {
 
   const loadEarnings = useCallback(async () => {
     try {
-      const [earningsRes, runsRes] = await Promise.all([
+      const [earningsRes, runsRes, productsRes] = await Promise.all([
         apiClient.get<FarmerEarnings>('/farmers/me/earnings'),
         apiClient.get<RunsResponse>('/farmers/me/delivery/runs'),
+        apiClient.get<unknown[]>('/farmers/me/products'),
       ]);
       setEarnings(earningsRes.data);
       setRuns(runsRes.data);
+      setProductCount(productsRes.data.length);
     } catch (err) {
       console.warn('Could not load earnings or deliveries:', err);
     }
@@ -97,6 +100,17 @@ export default function FarmerHome() {
 
         {approved ? (
           <>
+            {/* A new farm's first job: customers can't buy anything until it lists something. */}
+            {productCount === 0 ? (
+              <Pressable style={styles.firstProduct} onPress={() => router.push({ pathname: '/(farmer)/product/[id]', params: { id: 'new' } })}>
+                <MaterialIcons name="add-circle-outline" size={28} color={colors.primary} />
+                <View style={styles.firstProductText}>
+                  <Text style={styles.firstProductTitle}>Add your first product</Text>
+                  <Text style={styles.firstProductBody}>Customers can see your farm once it has something to sell.</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={22} color={colors.primary} />
+              </Pressable>
+            ) : null}
             <EarningsCard earnings={earnings} onPress={() => router.push('/(farmer)/earnings')} />
             <DeliveriesCard runs={runs} onPress={() => router.push('/(farmer)/deliveries')} />
             <StorePhotoCard />
@@ -126,6 +140,18 @@ function Step({
 }
 
 const styles = StyleSheet.create({
+  firstProduct: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.tint,
+  },
+  firstProductText: { flex: 1 },
+  firstProductTitle: { fontFamily: fonts.headline, fontSize: 17, color: colors.primaryDark },
+  firstProductBody: { fontSize: 13, lineHeight: 18, color: colors.text, marginTop: 2 },
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingBottom: spacing.xl },
   body: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg },

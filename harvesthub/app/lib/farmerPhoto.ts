@@ -1,4 +1,6 @@
+import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from './supabase';
 import type { PickedFile } from './validation/schemas';
 
@@ -21,6 +23,38 @@ export async function pickFarmPhoto(): Promise<PickedFile | null> {
 
   const asset = result.assets[0];
   return { uri: asset.uri, name: asset.name, mimeType: asset.mimeType, size: asset.size };
+}
+
+// Take one now, with the camera (as lib/deliveryPhoto.ts does). Null if they
+// back out or won't allow the camera.
+export async function takeFarmPhoto(): Promise<PickedFile | null> {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) return null;
+  const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7, allowsEditing: false });
+  if (result.canceled || !result.assets?.[0]) return null;
+  const asset = result.assets[0];
+  return {
+    uri: asset.uri,
+    name: asset.fileName ?? `photo-${Date.now()}.jpg`,
+    mimeType: asset.mimeType ?? 'image/jpeg',
+    size: asset.fileSize,
+  };
+}
+
+// The first step of adding a store or product photo: take one, or choose one.
+export function chooseFarmPhoto(): Promise<PickedFile | null> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Add a photo',
+      undefined,
+      [
+        { text: 'Take photo', onPress: () => takeFarmPhoto().then(resolve, () => resolve(null)) },
+        { text: 'Choose from library', onPress: () => pickFarmPhoto().then(resolve, () => resolve(null)) },
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(null) }
+    );
+  });
 }
 
 function extensionFor(file: PickedFile) {

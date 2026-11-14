@@ -1,0 +1,35 @@
+# A customer opens an order that's ready, marks it received and gives the farm
+# 4 stars. Pass EMAIL, PASSWORD and FARM (the order's farm, newest order first).
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- tapOn: "Orders"
+- extendedWaitUntil:
+    visible: ${FARM}
+    timeout: 30000
+# The list says where each order stands (item 17).
+- assertVisible: "Ready for pickup"
+- tapOn: ${FARM}
+- extendedWaitUntil:
+    visible: "Ready for pickup"
+    timeout: 20000
+- tapOn: "Mark as Received"
+# One tap can't end it by mistake any more (item 18).
+- assertVisible: "Picked up your order\\?"
+- tapOn: "(?i)yes, i have it"
+- extendedWaitUntil:
+    visible: "Completed"
+    timeout: 20000
+- assertVisible: "Rate this farm"
+# The stars have names now, and room to tap (item 19).
+- tapOn: "4 stars"
+- extendedWaitUntil:
+    visible: "Add a comment \\(optional\\)"
+    timeout: 15000
+- tapOn: "Add a comment \\(optional\\)"
+- inputText: "Autotest: great peppers"
+- hideKeyboard
+- tapOn: "Send comment"
+- waitForAnimationToEnd
+- takeScreenshot: customer_pickup_rate_done
