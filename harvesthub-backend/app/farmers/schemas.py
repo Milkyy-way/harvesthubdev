@@ -9,6 +9,9 @@ class FarmerFeedCard(BaseModel):
     photo_url: Optional[str]
     distance_km: float
     matched_categories: list[str]
+    # Every farm offers pickup; this says whether it can also deliver to this
+    # customer (home or their pod), for "Pickup & delivery" vs "Pickup only".
+    delivers: bool = False
 
 class FarmerFeedResponse(BaseModel):
     items: list[FarmerFeedCard]

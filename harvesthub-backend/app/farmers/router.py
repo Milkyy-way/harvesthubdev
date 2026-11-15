@@ -4,6 +4,7 @@ from app.core.database import get_db
 from app.customers.places import browse_point
 from app.customers.service import get_current_customer
 from app.farmers import service
+from app.delivery import service as delivery_service
 from app.farmers.schemas import FarmerFeedResponse, FarmerDetailOut, FarmerSpotlightResponse
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
@@ -24,6 +25,9 @@ def read_farmer_feed(
     items, total = service.list_farmer_feed(
         db, latitude, longitude, category, search, limit, offset
     )
+    delivering = delivery_service.farms_delivering_to(db, customer, [i["id"] for i in items])
+    for item in items:
+        item["delivers"] = item["id"] in delivering
     return {"items": items, "limit": limit, "offset": offset, "total": total}
 
 

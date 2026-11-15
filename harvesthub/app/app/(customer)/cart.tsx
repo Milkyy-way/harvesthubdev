@@ -213,7 +213,7 @@ export default function CartScreen() {
             onSelectDeliverySlot={(startsAt) => setDeliverySlot(farm.farmer_id, startsAt)}
             podId={fulfillmentByFarm[farm.farmer_id]?.podId ?? null}
             onSelectPod={(podId) => setPod(farm.farmer_id, podId)}
-            readyToPlaceSeparately={isFulfillmentReady(fulfillmentByFarm[farm.farmer_id])}
+            readyToPlaceSeparately={(cart?.farms.length ?? 0) > 1 && isFulfillmentReady(fulfillmentByFarm[farm.farmer_id])}
             onPlaceOrderSeparately={() => goToCheckout([farm.farmer_id])}
           />
         )}
@@ -244,8 +244,12 @@ export default function CartScreen() {
               {podWithOthers
                 ? 'Place your pod order separately'
                 : readyForCheckout
-                  ? 'Checkout at Once'
-                  : 'Choose pickup, or a delivery time, for each farm'}
+                  ? cart.farms.length > 1
+                    ? 'Checkout at Once'
+                    : 'Checkout'
+                  : cart.farms.length > 1
+                    ? 'Choose pickup, or a delivery time, for each farm'
+                    : 'Choose pickup, or a delivery time'}
             </Text>
           </Pressable>
         </View>

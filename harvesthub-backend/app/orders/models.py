@@ -11,6 +11,9 @@ class Order(Base):
     customer_id = Column(UUID(as_uuid=True), nullable=False)
     status = Column(String, nullable=False, default="active")  # trigger-maintained — see 0013's SQL
     placed_at = Column(TIMESTAMP, default=datetime.utcnow)
+    # A checkout the customer never paid for, removed (0041): left out of
+    # their lists and counts. No money moved and no farm saw it.
+    abandoned_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 

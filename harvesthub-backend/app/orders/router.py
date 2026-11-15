@@ -4,7 +4,15 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.customers.service import get_current_customer
 from app.orders import service
-from app.orders.schemas import CreateOrderRequest, CreateOrderResponse, OrderOut, CancelRequest, ReorderResponse
+from app.orders.schemas import (
+    CreateOrderRequest,
+    CreateOrderResponse,
+    OrderOut,
+    CancelRequest,
+    ReorderResponse,
+    ResumePaymentResponse,
+    DiscardResponse,
+)
 from app.ratings.schemas import SubmitRatingRequest
 from app.delivery.schemas import DeliveryPhotoOut, TrackingOut
 from app.pods import charging as pod_charging
@@ -38,6 +46,18 @@ def read_order(order_id: str, db: Session = Depends(get_db), customer=Depends(ge
 def sync_payment(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
     pod_charging.adopt_saved_card(db, customer.id, order_id)  # no-op unless it's a pod order
     return service.sync_payment_status(db, str(customer.id), order_id)
+
+
+@router.post("/{order_id}/resume-payment", response_model=ResumePaymentResponse)
+def resume_payment(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    # A checkout left unpaid: the payment sheet again (or the card sheet, for a pod order).
+    return service.resume_payment(db, customer, order_id)
+
+
+@router.post("/{order_id}/discard", response_model=DiscardResponse)
+def discard_checkout(order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    # A checkout left unpaid, removed: not counted as an order or a cancellation.
+    return service.discard_checkout(db, str(customer.id), order_id)
 
 
 @router.post("/{order_id}/pod-card")

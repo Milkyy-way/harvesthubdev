@@ -32,12 +32,11 @@ export interface CheckoutLineItem {
 export interface CheckoutGroup {
   farmer_id: string;
   farm_name: string;
-  address_street: string | null;
+  // The farm's town and distance only: its street address comes with the
+  // order once it's placed (2026-11-14).
   address_city: string | null;
   address_state: string | null;
-  address_zip: string | null;
-  latitude: number | null;
-  longitude: number | null;
+  distance_km?: number | null;
   fulfillment_method: FulfillmentMethod;
   items: CheckoutLineItem[];
   subtotal: number;

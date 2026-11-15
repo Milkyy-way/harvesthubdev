@@ -42,6 +42,15 @@ def create_refund(payment_intent_id: str, amount: float, reason: str | None = No
     return stripe.Refund.create(**params)
 
 
+def refund_in_full(payment_intent_id: str) -> stripe.Refund:
+    """Everything that was paid, once (the key makes a repeat a no-op)."""
+    return stripe.Refund.create(
+        payment_intent=payment_intent_id,
+        metadata={"reason": "paid after the order was cancelled"},
+        idempotency_key=f"refund-late-{payment_intent_id}",
+    )
+
+
 def retrieve_refund(refund_id: str) -> stripe.Refund:
     return stripe.Refund.retrieve(refund_id)
 

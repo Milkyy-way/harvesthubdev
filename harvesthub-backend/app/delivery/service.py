@@ -386,6 +386,40 @@ def _pod_options(db: Session, customer_id, farmer: FarmerProfile | None, s: Farm
     return out
 
 
+def farms_delivering_to(db: Session, customer: CustomerProfile, farmer_ids: list) -> set[str]:
+    """Which of these farms can deliver to this customer: to their home
+    (within the farm's distance), or, with Harvest Pass, to a pod they're in,
+    and with delivery times set. For "Pickup & delivery" on Home (2026-11-14);
+    the cart still checks each window."""
+    ids = []
+    for farmer_id in farmer_ids:
+        try:
+            ids.append(uuid.UUID(str(farmer_id)))
+        except ValueError:
+            continue
+    if not ids:
+        return set()
+    settings = {
+        s.farmer_id: s
+        for s in db.query(FarmDeliverySettings).filter(
+            FarmDeliverySettings.farmer_id.in_(ids), FarmDeliverySettings.offers_delivery.is_(True)
+        )
+    }
+    if not settings:
+        return set()
+    with_times = {
+        fid for (fid,) in db.query(FarmDeliveryWindow.farmer_id).filter(FarmDeliveryWindow.farmer_id.in_(list(settings))).distinct()
+    }
+    farmers = {f.id: f for f in db.query(FarmerProfile).filter(FarmerProfile.id.in_(list(with_times)))}
+    pods = [pod for pod, _ in _pods_of(db, customer.id)]
+    return {
+        str(fid)
+        for fid in with_times
+        if _unavailable_reason(farmers.get(fid), settings[fid], customer) is None
+        or any(_reaches(farmers.get(fid), settings[fid], pod.latitude, pod.longitude) for pod in pods)
+    }
+
+
 def _in_a_pod(db: Session, customer_id) -> bool:
     return db.query(PodMember.id).filter(PodMember.customer_id == customer_id, PodMember.status == "active").first() is not None
 

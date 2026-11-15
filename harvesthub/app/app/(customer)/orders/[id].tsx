@@ -6,10 +6,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
+import { apiErrorMessage } from '../../../lib/apiError';
+import { discardCheckout, useOrderPayment } from '../../../lib/orderPayment';
 import { OrderStoreSection } from '../../../components/customer/OrderStoreSection';
 import { OrderPassNote } from '../../../components/customer/OrderPassNote';
 import type { MembershipOverview } from '../../../types/membership';
-import type { Order, StoreOrder } from '../../../types/orders';
+import type { Order, ResumePaymentResponse, StoreOrder } from '../../../types/orders';
 
 export default function OrderDetailScreen() {
   const { id, justPlaced } = useLocalSearchParams<{ id: string; justPlaced?: string }>();
@@ -22,6 +24,8 @@ export default function OrderDetailScreen() {
   const [busyStoreOrderId, setBusyStoreOrderId] = useState<string | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [ratingStoreOrderId, setRatingStoreOrderId] = useState<string | null>(null);
+  const payForOrder = useOrderPayment();
+  const [paying, setPaying] = useState(false);
 
   // Right after ordering: Harvest Pass status, for the "saved you" line.
   const [pass, setPass] = useState<MembershipOverview | null>(null);
@@ -138,6 +142,46 @@ export default function OrderDetailScreen() {
     }
   };
 
+  // A checkout left at the payment sheet (2026-11-14): pay for it now, as at
+  // checkout, or remove it. It isn't an order until it's paid.
+  const payNow = async () => {
+    if (!order || paying) return;
+    setPaying(true);
+    try {
+      const res = await apiClient.post<ResumePaymentResponse>(`/orders/${order.id}/resume-payment`);
+      const { client_secret, card_setup } = res.data;
+      const result = client_secret ? await payForOrder(order.id, client_secret, card_setup) : 'paid';
+      if (result === 'paid') {
+        router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
+        return;
+      }
+      loadOrder();
+    } catch (err) {
+      Alert.alert("Can't pay for this one", apiErrorMessage(err, 'Please try again.'));
+      loadOrder();
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const confirmRemove = () => {
+    Alert.alert('Remove this order?', "You haven't paid for it, so nothing is charged. What you picked stays in your cart.", [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          if (!order) return;
+          setPaying(true);
+          const placed = await discardCheckout(order.id);
+          setPaying(false);
+          if (placed) setOrder(placed);
+          else router.back();
+        },
+      },
+    ]);
+  };
+
   const confirmCancelWholeOrder = () => {
     Alert.alert(
       'Cancel this whole order?',
@@ -179,9 +223,12 @@ export default function OrderDetailScreen() {
     );
   }
 
-  const hasCancellableStore = order.store_orders.some(
-    (so) => so.status === 'pending_payment' || so.status === 'paid' || so.status === 'ready_for_pickup'
-  );
+  const unfinished = Boolean(order.checkout_unfinished);
+  const processing = order.payment?.status === 'processing';
+  const hasCancellableStore =
+    !unfinished &&
+    !processing &&
+    order.store_orders.some((so) => so.status === 'pending_payment' || so.status === 'paid' || so.status === 'ready_for_pickup');
 
   return (
     <View style={styles.container}>
@@ -207,8 +254,19 @@ export default function OrderDetailScreen() {
               </View>
             ) : null}
             {justPlaced === '1' ? <OrderPassNote order={order} pass={pass} /> : null}
+            {unfinished ? (
+              <UnpaidCard order={order} paying={paying} onPay={payNow} onRemove={confirmRemove} />
+            ) : null}
+            {order.removed ? (
+              <View style={styles.unpaidCard}>
+                <Text style={styles.unpaidTitle}>Removed</Text>
+                <Text style={styles.unpaidText}>This order wasn&apos;t paid for, so it was removed. Nothing was charged.</Text>
+              </View>
+            ) : null}
             <View style={styles.summary}>
-              <Text style={styles.summaryLabel}>Placed {new Date(order.placed_at).toLocaleString()}</Text>
+              <Text style={styles.summaryLabel}>
+                {unfinished ? 'Checkout started' : 'Placed'} {new Date(order.placed_at).toLocaleString()}
+              </Text>
               <Text style={styles.summaryTotal}>
                 {order.payment?.charged_at_cutoff && !paymentSettled(order.payment.status) ? 'Up to ' : ''}${order.grand_total.toFixed(2)}
               </Text>
@@ -229,6 +287,7 @@ export default function OrderDetailScreen() {
             paysAtPickup={order.payment?.payment_method === 'cash_on_pickup'}
             paymentStatus={order.payment?.status}
             paymentFailure={order.payment?.failure_reason}
+            checkoutUnfinished={unfinished}
             busy={busyStoreOrderId === storeOrder.id}
             onCancel={() => confirmCancelStore(storeOrder)}
             onMarkReceived={() => confirmMarkReceived(storeOrder)}
@@ -249,6 +308,34 @@ export default function OrderDetailScreen() {
           ) : null
         }
       />
+    </View>
+  );
+}
+
+// Not paid for: the farm hasn't seen it and nothing was charged. Pay now, as at
+// checkout, or remove it; after pay_by it's removed for you.
+function UnpaidCard({ order, paying, onPay, onRemove }: { order: Order; paying: boolean; onPay: () => void; onRemove: () => void }) {
+  const podOrder = Boolean(order.payment?.charged_at_cutoff);
+  const by = order.pay_by ? new Date(order.pay_by).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+  const farms = order.store_orders.filter((so) => so.status === 'pending_payment').map((so) => so.farm_name);
+  return (
+    <View style={styles.unpaidCard}>
+      <Text style={styles.unpaidTitle}>{podOrder ? 'Card not saved yet' : 'Not paid yet'}</Text>
+      <Text style={styles.unpaidText}>
+        {podOrder ? 'Save a card to place this order' : 'Your payment wasn\'t finished, so this order isn\'t placed'}.{' '}
+        {farms.join(' and ') || 'The farm'} can&apos;t see it yet, and nothing has been charged.
+        {by ? ` Finish by ${by}, or it's removed.` : ''}
+      </Text>
+      <Pressable style={[styles.payButton, paying && styles.payButtonBusy]} onPress={onPay} disabled={paying}>
+        {paying ? (
+          <ActivityIndicator size="small" color={colors.white} />
+        ) : (
+          <Text style={styles.payButtonText}>{podOrder ? 'Save card and place order' : `Pay $${order.grand_total.toFixed(2)}`}</Text>
+        )}
+      </Pressable>
+      <Pressable style={styles.removeButton} onPress={onRemove} disabled={paying} hitSlop={8}>
+        <Text style={styles.removeText}>Remove it</Text>
+      </Pressable>
     </View>
   );
 }
@@ -310,6 +397,26 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
   },
   successText: { color: colors.primaryDark, fontSize: 14, fontWeight: '600', flex: 1 },
+  unpaidCard: {
+    backgroundColor: colors.tint,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+  },
+  unpaidTitle: { fontFamily: fonts.headlineBold, fontSize: 18, color: colors.text },
+  unpaidText: { fontSize: 13, lineHeight: 19, color: colors.text, marginTop: 4 },
+  payButton: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  payButtonBusy: { opacity: 0.6 },
+  payButtonText: { color: colors.white, fontSize: 15, fontWeight: '700' },
+  removeButton: { alignItems: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
+  removeText: { color: colors.danger, fontSize: 14, fontWeight: '700' },
   summary: { marginHorizontal: spacing.lg, marginBottom: spacing.md },
   summaryLabel: { fontSize: 13, color: colors.textMuted },
   summaryTotal: { fontFamily: fonts.headlineBold, fontSize: 32, color: colors.text, marginTop: 2 },

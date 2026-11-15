@@ -79,6 +79,22 @@ export interface Order {
   grand_total: number;
   store_orders: StoreOrder[];
   payment: OrderPayment | null;
+  // Not paid for yet (2026-11-14): not an order until it is. Pay with
+  // POST /orders/{id}/resume-payment, or remove it with /discard, by pay_by.
+  checkout_unfinished?: boolean;
+  pay_by?: string | null;
+  removed?: boolean; // removed unpaid: nothing was charged
+}
+
+export interface ResumePaymentResponse {
+  order: Order;
+  client_secret: string | null; // null: nothing left to pay
+  card_setup: boolean; // a pod order saves a card instead
+}
+
+export interface DiscardResponse {
+  removed: boolean;
+  order: Order | null; // when it turned out to be paid
 }
 
 export interface CreateOrderGroup {

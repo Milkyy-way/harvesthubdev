@@ -30,6 +30,8 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         **pods_service.run_jobs(db),
         # Group deals: opening to members, then everyone; charging at the deadline.
         **deals_closing.run(db),
+        # Checkouts nobody paid for within an hour: removed, payment cancelled.
+        "checkouts_expired": orders_service.expire_unfinished_checkouts(db),
         # Refunds Stripe didn't finish at once: how they ended.
         "refunds_settled": orders_service.sync_pending_refunds(db),
         # Google's coordinates may only be kept 30 days (app/core/geocoding.py).

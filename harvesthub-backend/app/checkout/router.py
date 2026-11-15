@@ -4,6 +4,8 @@ from app.core.database import get_db
 from app.customers.service import get_current_customer
 from app.checkout import service
 from app.checkout.schemas import CheckoutPreviewRequest, CheckoutPreviewResponse
+from app.core.geo import km_from
+from app.customers.places import browse_point
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
 
@@ -13,4 +15,8 @@ def preview_checkout(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
-    return service.build_checkout_preview(db, str(customer.id), payload.groups)
+    preview = service.build_checkout_preview(db, str(customer.id), payload.groups)
+    origin = browse_point(db, customer)
+    for group in preview["groups"]:
+        group["distance_km"] = km_from(origin, group["latitude"], group["longitude"])
+    return preview

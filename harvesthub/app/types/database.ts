@@ -92,6 +92,8 @@ export interface FarmerFeedCard {
   photo_url: string | null;
   distance_km: number;
   matched_categories: ProduceInterest[];
+  // Can deliver to this customer too (home or their pod); every farm offers pickup.
+  delivers?: boolean;
 }
 
 export interface FarmerFeedResponse {
@@ -237,12 +239,11 @@ export interface CartFarmGroup {
   farmer_id: string;
   farm_name: string;
   photo_url: string | null;
-  address_street: string | null;
+  // The farm's town and distance only: its street address comes with the
+  // order once it's placed (2026-11-14).
   address_city: string | null;
   address_state: string | null;
-  address_zip: string | null;
-  latitude: number | null;
-  longitude: number | null;
+  distance_km?: number | null;
   items: CartLineItem[];
   subtotal: number;
 }

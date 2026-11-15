@@ -3,15 +3,15 @@ import { View, Text, ScrollView, ActivityIndicator, Pressable, Alert, Platform, 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useStripe } from '@stripe/stripe-react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { apiClient } from '../../lib/apiClient';
 import { useCheckoutDraft } from '../../contexts/CheckoutDraftContext';
 import { CheckoutFarmSection } from '../../components/customer/CheckoutFarmSection';
-import { useCardSetupSheet } from '../../lib/harvestPass';
-import { apiErrorMessage } from '../../lib/apiError';
+import { PassNote, passLine } from '../../components/customer/CartPassNote';
+import { discardCheckout, useOrderPayment } from '../../lib/orderPayment';
 import type { CheckoutPreviewResponse } from '../../types/checkout';
+import type { MembershipOverview } from '../../types/membership';
 import type { CreateOrderRequest, CreateOrderResponse, OrderPaymentMethod } from '../../types/orders';
 
 export default function CheckoutScreen() {
@@ -19,8 +19,7 @@ export default function CheckoutScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { fulfillmentByFarm } = useCheckoutDraft();
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
-  const saveCard = useCardSetupSheet();
+  const payForOrder = useOrderPayment();
 
   const farmerIds = useMemo<string[]>(() => {
     try {
@@ -86,6 +85,16 @@ export default function CheckoutScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Whether the free month is still on offer, for the Harvest Pass line.
+  const [pass, setPass] = useState<MembershipOverview | null>(null);
+  const loadPass = useCallback(() => {
+    apiClient.get<MembershipOverview>('/membership').then(
+      (res) => setPass(res.data),
+      (err) => console.warn('Could not load Harvest Pass status:', err)
+    );
+  }, []);
+  useEffect(loadPass, [loadPass]);
+
   // Joining Harvest Pass from the checkout upsell changes the fees — reprice
   // when the customer comes back (keeping any promo codes they applied).
   const appliedPromoCodesRef = useRef(appliedPromoCodes);
@@ -96,8 +105,9 @@ export default function CheckoutScreen() {
       if (repriceOnFocus.current) {
         repriceOnFocus.current = false;
         loadPreview(appliedPromoCodesRef.current);
+        loadPass();
       }
-    }, [loadPreview])
+    }, [loadPreview, loadPass])
   );
   const openHarvestPass = () => {
     repriceOnFocus.current = true;
@@ -134,63 +144,24 @@ export default function CheckoutScreen() {
       const res = await apiClient.post<CreateOrderResponse>('/orders', buildOrderRequest());
       const { order, client_secret } = res.data;
 
+      const showOrder = (id: string) => router.replace({ pathname: '/(customer)/orders/[id]', params: { id, justPlaced: '1' } });
       if (paymentMethod === 'cash_on_pickup' || !client_secret) {
-        router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
+        showOrder(order.id);
         return;
       }
 
-      if (order.payment?.charged_at_cutoff) {
-        const saved = await saveCard(client_secret, 'Save card and place order');
-        if (!saved) {
-          // No card, no order: don't leave an unplaced one behind.
-          apiClient.post(`/orders/${order.id}/cancel`, { reason: 'Left checkout' }).catch((err) => console.warn('Could not clear the order:', err));
-          return;
-        }
-        try {
-          await apiClient.post(`/orders/${order.id}/sync-payment-status`);
-        } catch (err) {
-          Alert.alert('Your order wasn\'t placed', apiErrorMessage(err, 'Please try again.'));
-          return;
-        }
-        router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
+      const result = await payForOrder(order.id, client_secret, Boolean(order.payment?.charged_at_cutoff));
+      if (result === 'paid') {
+        showOrder(order.id);
         return;
       }
-
-      const { error: initError } = await initPaymentSheet({
-        merchantDisplayName: 'HarvestHub',
-        paymentIntentClientSecret: client_secret,
-        // Stripe only offers these on phones set up for them. Still a card
-        // payment as far as the order is concerned.
-        applePay: { merchantCountryCode: 'US' },
-        googlePay: {
-          merchantCountryCode: 'US',
-          currencyCode: 'USD',
-          testEnv: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith('pk_test_'),
-        },
-      });
-      if (initError) {
-        Alert.alert('Could not start payment', initError.message);
-        return;
+      if (result === 'not_paid') {
+        // Closed without paying: no order (2026-11-14). It's removed, so it
+        // isn't counted as an order or a cancellation, and the cart is as it
+        // was. Unless it turns out it was paid after all.
+        const placed = await discardCheckout(order.id);
+        if (placed) showOrder(placed.id);
       }
-
-      const { error: presentError } = await presentPaymentSheet();
-      if (presentError) {
-        if (presentError.code !== 'Canceled') {
-          Alert.alert('Payment not completed', presentError.message);
-        }
-        return;
-      }
-
-      // Immediate best-effort reconciliation for a snappy UI — the Stripe
-      // webhook (app/webhooks/router.py) is the authoritative source and
-      // will confirm this independently even if this call fails.
-      try {
-        await apiClient.post(`/orders/${order.id}/sync-payment-status`);
-      } catch (err) {
-        console.warn('Could not sync payment status immediately (webhook will still confirm it):', err);
-      }
-
-      router.replace({ pathname: '/(customer)/orders/[id]', params: { id: order.id, justPlaced: '1' } });
     } catch (err: any) {
       console.warn('Could not place order:', err);
       Alert.alert('Could not place order', err?.response?.data?.detail ?? 'Please try again.');
@@ -235,7 +206,9 @@ export default function CheckoutScreen() {
           ))
         )}
 
-        {preview && preview.groups.length > 0 ? <HarvestPassNote preview={preview} onPress={openHarvestPass} /> : null}
+        {preview && preview.groups.length > 0 ? (
+          <PassNote message={checkoutPassMessage(preview, pass)} onPress={openHarvestPass} style={styles.passNote} />
+        ) : null}
 
         {preview && preview.groups.length > 0 ? (
           <View style={styles.paymentSection}>
@@ -333,45 +306,18 @@ function ContactSharingNotice({
   );
 }
 
-// Members: what Harvest Pass saved here, or how much more to add to get the
-// free service fee. Non-members: what Harvest Pass would save on this order.
-function HarvestPassNote({ preview, onPress }: { preview: CheckoutPreviewResponse; onPress: () => void }) {
+// The same Harvest Pass line as the cart's (2026-11-14), right under the farm
+// total, with this checkout's exact figures: what the Pass saves here, or how
+// much more to add for it.
+function checkoutPassMessage(preview: CheckoutPreviewResponse, pass: MembershipOverview | null) {
   const min = preview.member_min_subtotal;
-  if (preview.is_member) {
-    if (preview.member_savings > 0) {
-      return (
-        <View style={styles.passNote}>
-          <Text style={styles.passEmoji}>🌾</Text>
-          <Text style={styles.passText}>
-            <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on this order. You&apos;re saving $
-            {preview.member_savings.toFixed(2)}.
-          </Text>
-        </View>
-      );
-    }
-    const short = Math.max(min - preview.items_subtotal, 0);
-    if (short <= 0) return null;
-    return (
-      <View style={styles.passNote}>
-        <Text style={styles.passEmoji}>🌾</Text>
-        <Text style={styles.passText}>
-          Add <Text style={styles.passBold}>${short.toFixed(2)}</Text> more to skip the service fee with Harvest Pass (orders of $
-          {min.toFixed(0)}+).
-        </Text>
-      </View>
-    );
-  }
-  if (preview.member_potential_savings <= 0) return null;
-  return (
-    <Pressable style={({ pressed }) => [styles.passNote, styles.passNoteUpsell, pressed && styles.passPressed]} onPress={onPress}>
-      <Text style={styles.passEmoji}>🌾</Text>
-      <Text style={styles.passText}>
-        Save <Text style={styles.passBold}>${preview.member_potential_savings.toFixed(2)}</Text> on this order with{' '}
-        <Text style={styles.passBold}>Harvest Pass</Text> — no service fee on orders of ${min.toFixed(0)}+.
-      </Text>
-      <MaterialIcons name="chevron-right" size={20} color={colors.primaryDark} />
-    </Pressable>
-  );
+  return passLine({
+    isMember: preview.is_member,
+    min,
+    short: Math.round((min - preview.items_subtotal) * 100) / 100,
+    fee: preview.is_member ? preview.member_savings : preview.member_potential_savings,
+    freeDays: pass?.free_period_available ? pass.free_days : null,
+  });
 }
 
 function PaymentOption({
@@ -413,21 +359,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   errorText: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
   paymentSection: { marginHorizontal: spacing.lg, marginTop: spacing.lg },
-  passNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: colors.tint,
-  },
-  passNoteUpsell: { backgroundColor: `${colors.accent}2E` },
-  passPressed: { opacity: 0.8 },
-  passEmoji: { fontSize: 22 },
-  passText: { flex: 1, fontSize: 13, lineHeight: 18, color: colors.text },
-  passBold: { fontWeight: '700', color: colors.primaryDark },
+  passNote: { marginHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: 0 },
   paymentTitle: { fontFamily: fonts.headline, fontSize: 19, color: colors.text, marginBottom: spacing.sm },
   paymentOption: {
     flexDirection: 'row',

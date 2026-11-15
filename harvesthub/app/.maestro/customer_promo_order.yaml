@@ -37,8 +37,12 @@ appId: com.harvesthubmarket.app
 
 - assertVisible: "Farm subtotal"
 - assertVisible: "\\$15.00"
-- tapOn: "Pickup"
-- tapOn: "Checkout at Once"
+# 2026-11-14: the Pickup button shows how far the farm is, the farm's street
+# address waits until the order is placed, and one farm means plain "Checkout".
+- tapOn: "Pickup.*"
+- assertVisible: ".*address and directions once your order is placed.*"
+- assertNotVisible: "Place Order Separately"
+- tapOn: "Checkout"
 
 - assertVisible: "Checkout"
 - assertVisible: "\\$16.55"

@@ -154,6 +154,7 @@ print("\n== 5. A declined card")
 cust4 = hh.User(customer_email(4))
 fill_cart(cust4, [("ZZ Kale", 2)])
 before_kale = stock("ZZ Kale")
+before4 = cust4.get("/customers/me/dashboard-summary")
 declined = cust4.post("/orders", {"groups": [{"farmer_id": farm["A"].id, "fulfillment_method": "pickup"}], "payment_method": "card"})
 intent = hh.pay(declined["client_secret"], "pm_card_chargeDeclined")
 r.check("Stripe declined the card", intent.status == "requires_payment_method", intent.status)
@@ -162,8 +163,24 @@ sd = store_orders(declined["order"]["id"])[farm["A"].id]
 r.check("nothing was placed: not paid, not released, no stock taken",
         sd["status"] == "pending_payment" and sd["released_to_farmer_at"] is None and stock("ZZ Kale") == before_kale, sd)
 r.check("the kale is still in the cart to try again", hh.q1("select count(*) as n from cart_items where customer_id = %(c)s", c=cust4.id)["n"] == 1)
+# 2026-11-14: a checkout nobody paid for isn't an order.
+shown = cust4.get(f"/orders/{declined['order']['id']}")
+r.check("it reads 'not paid yet', the farm's street held back",
+        shown.get("checkout_unfinished") is True and shown["store_orders"][0]["pickup_address_street"] is None, shown.get("checkout_unfinished"))
+summary4 = cust4.get("/customers/me/dashboard-summary")
+r.check("it isn't counted as an order", summary4["orders_total"] == before4["orders_total"], (before4["orders_total"], summary4["orders_total"]))
+again = cust4.post(f"/orders/{declined['order']['id']}/resume-payment")
+r.check("Pay again: the same payment, ready for another card", again["client_secret"] == declined["client_secret"] and again["card_setup"] is False)
 cust4.post(f"/orders/{declined['order']['id']}/cancel", {"reason": "Autotest: gave up"})
 r.check("cancelling it cancels the Stripe payment", stripe.PaymentIntent.retrieve(declined["client_secret"].split("_secret_")[0]).status == "canceled")
+r.check("and removes it: not listed, not counted as cancelled",
+        hh.q1("select abandoned_at is not null as gone from orders where id = %(o)s", o=declined["order"]["id"])["gone"]
+        and declined["order"]["id"] not in [o["id"] for o in cust4.get("/orders")]
+        and cust4.get("/customers/me/dashboard-summary")["orders_cancelled"] == before4["orders_cancelled"])
+closed = cust4.post("/orders", {"groups": [{"farmer_id": farm["A"].id, "fulfillment_method": "pickup"}], "payment_method": "card"})
+gone = cust4.post(f"/orders/{closed['order']['id']}/discard")
+r.check("closing the payment sheet removes the checkout", gone["removed"] is True
+        and stripe.PaymentIntent.retrieve(closed["client_secret"].split("_secret_")[0]).status == "canceled")
 
 # --- 6. The farmer cancels a paid order -----------------------------------------------------
 print("\n== 6. The farmer cancels a paid order")

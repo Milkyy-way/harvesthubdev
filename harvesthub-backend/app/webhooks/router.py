@@ -57,6 +57,9 @@ async def stripe_webhook(
         orders_service.reconcile_payment_intent(
             db, obj.get("status", "requires_payment_method"), obj["id"], failure_reason=last_error.get("message")
         )
+    elif event["type"] == "payment_intent.processing":
+        # Paid, and Stripe is still confirming it: placed, but can't be cancelled yet.
+        orders_service.reconcile_payment_intent(db, "processing", obj["id"])
     elif event["type"] == "payment_intent.canceled":
         orders_service.reconcile_payment_intent(db, "canceled", obj["id"])
 

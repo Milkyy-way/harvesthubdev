@@ -8,6 +8,14 @@ MAX_BROWSE_MILES = 50
 MAX_BROWSE_KM = MAX_BROWSE_MILES * KM_PER_MILE
 
 
+def km_from(origin: tuple[float | None, float | None], latitude: float | None, longitude: float | None) -> float | None:
+    """How far a farm is from where the customer browses from, or None when
+    either end isn't on the map."""
+    if origin[0] is None or origin[1] is None or latitude is None or longitude is None:
+        return None
+    return round(haversine_km(origin[0], origin[1], latitude, longitude), 2)
+
+
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0088  # mean Earth radius, km
     phi1, phi2 = math.radians(lat1), math.radians(lat2)

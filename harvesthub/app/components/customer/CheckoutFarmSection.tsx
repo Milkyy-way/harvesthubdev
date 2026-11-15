@@ -1,8 +1,8 @@
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
-import { openDirections } from '../../lib/maps';
 import { TextField } from '../TextField';
+import { formatDistance } from './formatDistance';
 import type { CheckoutGroup } from '../../types/checkout';
 
 type Props = {
@@ -20,15 +20,13 @@ export function CheckoutFarmSection({
   onApplyPromo,
   applyingPromo,
 }: Props) {
-  const pickupAddressLine = [group.address_street, group.address_city, group.address_state, group.address_zip]
+  // The farm's street address comes with the order, once it's placed (2026-11-14).
+  const pickupWhere = [
+    [group.address_city, group.address_state].filter(Boolean).join(', ') || null,
+    group.distance_km != null ? formatDistance(group.distance_km) : null,
+  ]
     .filter(Boolean)
-    .join(', ');
-
-  const handleDirections = () => {
-    if (group.latitude !== null && group.longitude !== null) {
-      openDirections(group.latitude, group.longitude, group.farm_name);
-    }
-  };
+    .join(' · ');
 
   return (
     <View style={styles.container}>
@@ -42,16 +40,11 @@ export function CheckoutFarmSection({
         />
         <Text style={styles.fulfillmentText} numberOfLines={2}>
           {group.fulfillment_method === 'pickup'
-            ? `Pickup at ${pickupAddressLine || group.farm_name}`
+            ? `Pickup at the farm${pickupWhere ? ` in ${pickupWhere}` : ''}. The address comes with your order.`
             : group.pod_name
               ? `Delivery ${group.delivery_window_label ?? ''} to ${group.pod_name}'s drop point: ${group.delivery_address_line ?? ''}`
               : `Delivery ${group.delivery_window_label ?? ''} to ${group.delivery_address_line || 'your address'}`}
         </Text>
-        {group.fulfillment_method === 'pickup' && group.latitude !== null ? (
-          <Pressable onPress={handleDirections} hitSlop={8}>
-            <Text style={styles.directionsLink}>Directions</Text>
-          </Pressable>
-        ) : null}
       </View>
 
       {group.delivery_error ? (
@@ -160,7 +153,6 @@ const styles = StyleSheet.create({
   farmName: { fontFamily: fonts.headline, fontSize: 19, color: colors.text, marginBottom: spacing.xs },
   fulfillmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
   fulfillmentText: { flex: 1, fontSize: 12.5, color: colors.textMuted },
-  directionsLink: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
   deliveryError: {
     flexDirection: 'row',
     alignItems: 'flex-start',

@@ -2,14 +2,17 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { useRouter, type Href } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../constants/theme';
+import { formatDistance } from './formatDistance';
 import type { FulfillmentMethod } from '../../types/checkout';
 import type { FarmDeliveryOption } from '../../types/delivery';
 
 type Props = {
   method: FulfillmentMethod | null;
   onSelectMethod: (method: FulfillmentMethod) => void;
-  pickupAddressLine: string | null;
-  onPressDirections: () => void;
+  // The farm's town and how far it is. Its street address is shared once the
+  // order is placed (2026-11-14), so it isn't shown here.
+  pickupTown: string | null;
+  distanceKm: number | null;
   // This farm's delivery offer for this customer (GET /delivery/options);
   // null while loading or if the farm doesn't deliver.
   delivery: FarmDeliveryOption | null;
@@ -25,8 +28,8 @@ type Props = {
 export function FulfillmentSelector({
   method,
   onSelectMethod,
-  pickupAddressLine,
-  onPressDirections,
+  pickupTown,
+  distanceKm,
   delivery,
   deliverySlot,
   onSelectDeliverySlot,
@@ -55,7 +58,9 @@ export function FulfillmentSelector({
           accessibilityState={{ selected: method === 'pickup' }}
         >
           <MaterialIcons name="storefront" size={16} color={method === 'pickup' ? colors.white : colors.textMuted} />
-          <Text style={[styles.toggleText, method === 'pickup' && styles.toggleTextActive]}>Pickup</Text>
+          <Text style={[styles.toggleText, method === 'pickup' && styles.toggleTextActive]}>
+            Pickup{distanceKm != null ? ` · ${formatDistance(distanceKm)}` : ''}
+          </Text>
         </Pressable>
         {offersDelivery ? (
           <Pressable
@@ -82,12 +87,11 @@ export function FulfillmentSelector({
       {method === 'pickup' ? (
         <View style={styles.box}>
           <MaterialIcons name="place" size={16} color={colors.textMuted} />
-          <Text style={styles.boxText} numberOfLines={2}>
-            {pickupAddressLine ?? 'Pickup address not available yet'}
+          <Text style={styles.boxText}>
+            {pickupTown ? `At the farm in ${pickupTown}` : 'At the farm'}
+            {distanceKm != null ? `, ${formatDistance(distanceKm)} away` : ''}. You&apos;ll get the address and directions once your
+            order is placed.
           </Text>
-          <Pressable style={styles.smallButton} onPress={onPressDirections} hitSlop={8}>
-            <Text style={styles.smallButtonText}>Get Directions</Text>
-          </Pressable>
         </View>
       ) : method === 'delivery' && delivery ? (
         <View>

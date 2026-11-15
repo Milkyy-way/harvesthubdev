@@ -22,6 +22,9 @@ type Tone = 'ready' | 'active' | 'waiting' | 'done' | 'cancelled';
 export function orderStatus(order: Order): { label: string; tone: Tone } {
   const statuses = order.store_orders.map((so) => so.status);
   const payment = order.payment;
+  // Left at the payment sheet: not an order yet (open it to pay or remove).
+  if (order.checkout_unfinished) return { label: 'Not paid yet', tone: 'cancelled' };
+  if (payment?.status === 'processing' && statuses.includes('pending_payment')) return { label: 'Payment processing', tone: 'waiting' };
   if (statuses.includes('ready_for_pickup')) return { label: 'Ready for pickup', tone: 'ready' };
   if (statuses.includes('out_for_delivery')) return { label: 'On its way', tone: 'ready' };
   if (statuses.includes('paid')) return { label: 'Preparing', tone: 'active' };

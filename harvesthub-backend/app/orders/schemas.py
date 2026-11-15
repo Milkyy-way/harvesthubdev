@@ -86,11 +86,35 @@ class OrderOut(BaseModel):
     grand_total: float
     store_orders: list[StoreOrderOut]
     payment: Optional[PaymentOut]
+    # Not paid for yet (2026-11-14): the payment sheet was closed, or the card
+    # declined. Not an order yet: the farm hasn't seen it, nothing was charged,
+    # and it isn't counted. The customer can pay (POST /orders/{id}/resume-payment)
+    # or remove it (POST /orders/{id}/discard) until pay_by; after that the
+    # scheduled job removes it.
+    checkout_unfinished: bool = False
+    pay_by: Optional[str] = None
+    # Removed unpaid (0041): only reachable by its link, never listed.
+    removed: bool = False
 
 
 class CreateOrderResponse(BaseModel):
     order: OrderOut
     client_secret: Optional[str]
+
+
+class ResumePaymentResponse(BaseModel):
+    order: OrderOut
+    # None when there's nothing left to pay (it went through meanwhile).
+    client_secret: Optional[str]
+    # A pod order saves a card (a SetupIntent) instead of paying now.
+    card_setup: bool = False
+
+
+class DiscardResponse(BaseModel):
+    # False when the payment turned out to have gone through: `order` is then
+    # the placed order.
+    removed: bool
+    order: Optional[OrderOut] = None
 
 
 class CancelRequest(BaseModel):

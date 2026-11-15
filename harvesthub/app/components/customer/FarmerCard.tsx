@@ -46,8 +46,9 @@ export function FarmerCard({ farmer, onPress }: Props) {
         {farmer.farm_name}
       </Text>
       <View style={styles.metaRow}>
-        <MaterialIcons name="storefront" size={14} color={colors.textMuted} />
-        <Text style={styles.meta}>Pickup at the farm</Text>
+        {/* Every farm offers pickup; delivery only where it reaches this customer (2026-11-14). */}
+        <MaterialIcons name={farmer.delivers ? 'local-shipping' : 'storefront'} size={14} color={colors.textMuted} />
+        <Text style={styles.meta}>{farmer.delivers ? 'Pickup & delivery' : 'Pickup only'}</Text>
         {farmer.matched_categories.length > 0 ? (
           <View style={styles.matchedTag}>
             <Text style={styles.matchedText} numberOfLines={1}>

@@ -13,18 +13,16 @@ class CartLineItemOut(BaseModel):
 # One entry per farmer with items in the cart — the cart is grouped this
 # way because checkout splits it into one order per farmer (separate
 # fulfillment choice, separate total), not one order for the whole cart.
-# Carries the farm's own address/coordinates so the cart page can offer a
-# pickup-at-the-farm option without a second round trip to /farmers/{id}.
+# The farm's town and how far it is, for "Pickup · 4.2 mi". Its street
+# address is only shared once an order is placed (2026-11-14): it's on the
+# order, not here.
 class CartFarmGroupOut(BaseModel):
     farmer_id: str
     farm_name: str
     photo_url: Optional[str]
-    address_street: Optional[str]
     address_city: Optional[str]
     address_state: Optional[str]
-    address_zip: Optional[str]
-    latitude: Optional[float]
-    longitude: Optional[float]
+    distance_km: Optional[float] = None
     items: list[CartLineItemOut]
     subtotal: float
 

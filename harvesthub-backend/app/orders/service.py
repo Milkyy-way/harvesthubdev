@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 # Terminal from the customer's point of view — no further payment action
 # will change these without a new attempt (we don't build retries yet).
 _TERMINAL_PAYMENT_STATUSES = ("succeeded", "canceled", "failed")
+# A card payment the customer hasn't made (2026-11-14): the payment sheet was
+# closed, the card was declined, or the bank's check wasn't finished. Nothing
+# has been charged. 'processing' is different: they paid and Stripe is still
+# confirming it, so that order is placed.
+_UNPAID_INTENT_STATUSES = ("requires_payment_method", "requires_confirmation", "requires_action")
+# How long an unfinished checkout waits to be paid before it's removed
+# (expire_unfinished_checkouts, every 15 minutes).
+CHECKOUT_HOLD = timedelta(hours=1)
+_PAYMENT_PROCESSING = "Your payment is still going through. You can cancel once it's confirmed, usually within a few minutes."
+_PROVIDER_UNREACHABLE = "We couldn't reach our payment provider. Please try again."
 # Store order lifecycle (see 0025, 0032):
 #   card pickup:   pending_payment -> paid -> ready_for_pickup -> completed
 #   cash pickup:   pending_payment ---------> ready_for_pickup -> completed
@@ -71,6 +81,39 @@ def get_owned_order(db: Session, customer_id: str, order_id: str) -> Order:
     return order
 
 
+def checkout_unfinished(order: Order, store_orders: list, payment: Payment | None) -> bool:
+    """A checkout the customer hasn't paid for yet (for a pod order: hasn't
+    saved a card for). It isn't an order yet: no farm has seen it, no stock
+    was taken, nothing was charged, and it isn't counted anywhere."""
+    if order.abandoned_at is not None or payment is None or payment.payment_method == "cash_on_pickup":
+        return False
+    if payment.status not in _UNPAID_INTENT_STATUSES:
+        return False
+    if any(so.released_to_farmer_at is not None or so.group_deal_id for so in store_orders):
+        return False
+    return any(so.status == "pending_payment" for so in store_orders)
+
+
+def _store_orders_of(db: Session, order_id) -> list:
+    return db.query(StoreOrder).filter(StoreOrder.order_id == order_id).order_by(StoreOrder.created_at).all()
+
+
+def _payment_of(db: Session, order_id) -> Payment | None:
+    return db.query(Payment).filter(Payment.order_id == order_id).first()
+
+
+def _unfinished_order_ids(db: Session, orders: list) -> set:
+    """Which of these orders are unfinished checkouts, in two queries."""
+    ids = [o.id for o in orders]
+    if not ids:
+        return set()
+    payments = {p.order_id: p for p in db.query(Payment).filter(Payment.order_id.in_(ids))}
+    store_orders: dict = defaultdict(list)
+    for so in db.query(StoreOrder).filter(StoreOrder.order_id.in_(ids)):
+        store_orders[so.order_id].append(so)
+    return {o.id for o in orders if checkout_unfinished(o, store_orders[o.id], payments.get(o.id))}
+
+
 def cancellations_for(db: Session, store_order_ids) -> dict:
     """store_order_id -> (cancelled_by_role, reason) for the ones that were
     cancelled — shown to the customer ("Cancelled by the farm: out of
@@ -91,6 +134,9 @@ def build_order_out(db: Session, order_id) -> dict:
     store_orders = db.query(StoreOrder).filter(StoreOrder.order_id == order_id).order_by(StoreOrder.created_at).all()
     payment = db.query(Payment).filter(Payment.order_id == order_id).first()
     cancellation_by_store_order = cancellations_for(db, [so.id for so in store_orders])
+    # Not paid for yet: the farm's street address is only shared once the
+    # order is placed (2026-11-14), like the farm only sees the customer then.
+    unfinished = checkout_unfinished(order, store_orders, payment)
 
     # Live-joined, not a snapshot — unlike price/address (frozen for
     # historical accuracy), a farm's photo has no legal/financial reason to
@@ -126,10 +172,10 @@ def build_order_out(db: Session, order_id) -> dict:
                 "photo_url": photo_by_farmer.get(so.farmer_id),
                 "my_rating": rating.rating if rating else None,
                 "fulfillment_method": so.fulfillment_method,
-                "pickup_address_street": so.pickup_address_street,
+                "pickup_address_street": None if unfinished else so.pickup_address_street,
                 "pickup_address_city": so.pickup_address_city,
                 "pickup_address_state": so.pickup_address_state,
-                "pickup_address_zip": so.pickup_address_zip,
+                "pickup_address_zip": None if unfinished else so.pickup_address_zip,
                 "delivery_address_street": so.delivery_address_street,
                 "delivery_address_city": so.delivery_address_city,
                 "delivery_address_state": so.delivery_address_state,
@@ -183,11 +229,15 @@ def build_order_out(db: Session, order_id) -> dict:
         "grand_total": round(grand_total, 2),
         "store_orders": store_order_outs,
         "payment": payment_out,
+        "checkout_unfinished": unfinished,
+        "removed": order.abandoned_at is not None,
+        "pay_by": (_as_utc(order.placed_at) + CHECKOUT_HOLD).isoformat() if unfinished else None,
     }
 
 
 def list_orders(db: Session, customer_id: str, status_filter: str | None, range_key: str | None = None) -> list[dict]:
-    q = db.query(Order).filter(Order.customer_id == customer_id)
+    # Removed checkouts never became orders (0041).
+    q = db.query(Order).filter(Order.customer_id == customer_id, Order.abandoned_at.is_(None))
     if status_filter:
         q = q.filter(Order.status == status_filter)
     if range_key in _RANGE_WINDOWS:
@@ -492,6 +542,8 @@ def reconcile_payment_intent(
         return  # unrecognized intent (different environment/stale test data) — ignore, don't fail the caller
 
     if payment.status in _TERMINAL_PAYMENT_STATUSES:
+        if payment.status == "canceled" and stripe_status == "succeeded":
+            _refund_late_payment(payment_intent_id)
         return
 
     payment.status = stripe_status
@@ -527,6 +579,224 @@ def sync_payment_status(db: Session, customer_id: str, order_id: str) -> dict:
         failure_reason=(intent.last_payment_error.message if getattr(intent, "last_payment_error", None) else None),
     )
     return build_order_out(db, order.id)
+
+
+def _refund_late_payment(payment_intent_id: str) -> None:
+    """Money arrived for an order we'd already cancelled as unpaid. The
+    cancel paths check with Stripe before marking a payment cancelled, so
+    this shouldn't happen; if it does, the customer gets it all back. Stripe
+    keeps its fee on the refund. Logged as an error, to look into."""
+    logger.error("Payment %s succeeded after its order was cancelled; refunding it in full", payment_intent_id)
+    try:
+        stripe_client.refund_in_full(payment_intent_id)
+    except stripe.error.StripeError as e:
+        logger.error("Could not refund late payment %s, refund it by hand: %s", payment_intent_id, e)
+
+
+def _refresh_payment(db: Session, order: Order, payment: Payment | None) -> None:
+    """Asks Stripe where an unpaid payment really stands (the webhook may be
+    late): a card paid meanwhile is placed, and a pod order's saved card
+    places it."""
+    if payment is None or payment.payment_method == "cash_on_pickup":
+        return
+    if payment.stripe_payment_intent_id:
+        if payment.status not in _TERMINAL_PAYMENT_STATUSES:
+            sync_payment_status(db, str(order.customer_id), str(order.id))
+    elif payment.stripe_setup_intent_id and payment.status == "requires_payment_method":
+        from app.pods import charging as pod_charging  # it imports this module
+
+        pod_charging.adopt_saved_card(db, order.customer_id, str(order.id))
+    db.refresh(payment)
+
+
+def _block_while_processing(db: Session, order: Order, payment: Payment | None) -> None:
+    """A payment Stripe is still confirming can't be stopped, so the order
+    can't be cancelled until it's confirmed (then it's refunded) or fails."""
+    if payment is None or payment.status != "processing":
+        return
+    _refresh_payment(db, order, payment)
+    if payment.status == "processing":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PAYMENT_PROCESSING)
+
+
+def _cancel_unpaid_intent(db: Session, payment: Payment) -> None:
+    """Cancels a PaymentIntent nobody has paid, so it can never be charged.
+    If Stripe says it was paid after all, records that (the order is placed)
+    and raises 409, so the customer can cancel it again as a refund."""
+    try:
+        stripe_client.cancel_payment_intent(payment.stripe_payment_intent_id)
+        return
+    except stripe.error.StripeError:
+        pass  # already cancelled, or no longer unpaid: ask Stripe which
+    try:
+        intent = stripe_client.retrieve_payment_intent(payment.stripe_payment_intent_id)
+    except stripe.error.StripeError:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_PROVIDER_UNREACHABLE)
+    if intent.status == "canceled":
+        return
+    if intent.status in ("succeeded", "processing"):
+        reconcile_payment_intent(db, intent.status, intent.id, charge_id=getattr(intent, "latest_charge", None))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_PAYMENT_PROCESSING
+            if intent.status == "processing"
+            else "Your payment just went through, so this order was placed. You can still cancel it, and you'll get a refund.",
+        )
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_PROVIDER_UNREACHABLE)
+
+
+def _abandon(db: Session, order: Order, payment: Payment, store_orders: list) -> bool:
+    """Removes an unfinished checkout: its payment is cancelled with Stripe
+    first, so it can never be charged, then the order is marked removed
+    (0041), not cancelled: it was never an order. Returns False, removing
+    nothing, if it turns out to have been paid or a card saved meanwhile
+    (then it's placed). Commits."""
+    _refresh_payment(db, order, payment)
+    store_orders = _store_orders_of(db, order.id)
+    if not checkout_unfinished(order, store_orders, payment):
+        return False
+    if payment.stripe_payment_intent_id:
+        try:
+            _cancel_unpaid_intent(db, payment)
+        except HTTPException as e:
+            if e.status_code == status.HTTP_409_CONFLICT:
+                return False  # paid after all: it's placed now
+            raise
+    # A pod order's SetupIntent is left as it is: without the app it can't
+    # save a card, and a saved card alone never charges anything.
+    payment.status = "canceled"
+    db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason="Checkout not finished"))
+    for so in store_orders:
+        if so.status == "pending_payment":
+            so.status = "cancelled"
+    order.abandoned_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def discard_checkout(db: Session, customer_id: str, order_id: str) -> dict:
+    """The customer closed the payment sheet, or tapped Remove on an order
+    they didn't pay for: it goes, with no cancellation on their record."""
+    order = get_owned_order(db, customer_id, order_id)
+    if order.abandoned_at is not None:
+        return {"removed": True, "order": None}
+    store_orders, payment = _store_orders_of(db, order.id), _payment_of(db, order.id)
+    if not checkout_unfinished(order, store_orders, payment):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This order has been placed, so it can't be removed. You can cancel it instead.",
+        )
+    if _abandon(db, order, payment, store_orders):
+        return {"removed": True, "order": None}
+    return {"removed": False, "order": build_order_out(db, order.id)}
+
+
+def _still_available(db: Session, store_orders: list) -> None:
+    """Before paying for an older checkout: everything in it can still be
+    had. Prices stay as they were at checkout (it's at most an hour old)."""
+    now = datetime.now(timezone.utc)
+    for so in store_orders:
+        if so.status != "pending_payment":
+            continue
+        if so.fulfillment_method == "delivery" and so.delivery_window_starts_at is not None:
+            s = db.get(FarmDeliverySettings, so.farmer_id)
+            if now >= so.delivery_window_starts_at - timedelta(hours=s.cutoff_hours if s else 0):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Orders for that {so.farm_name} delivery time have closed. Remove this one and check out again to pick another time.",
+                )
+        for item in db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id):
+            product = db.get(Product, item.product_id) if item.product_id else None
+            if product is None or not product.is_active or product.quantity_available < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"{item.product_name} from {so.farm_name} isn't available in that amount any more. Remove this one and check out again.",
+                )
+
+
+def resume_payment(db: Session, customer, order_id: str) -> dict:
+    """Pay for a checkout the customer left unfinished: the same payment sheet
+    again, on the same PaymentIntent when Stripe allows it. Returns no
+    client_secret when it turns out to be paid already."""
+    customer_id = str(customer.id)
+    order = get_owned_order(db, customer_id, order_id)
+    payment = _payment_of(db, order.id)
+    _refresh_payment(db, order, payment)
+    store_orders = _store_orders_of(db, order.id)
+    if not checkout_unfinished(order, store_orders, payment):
+        if order.abandoned_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This checkout was removed. Your cart still has what's in stock, so please check out again.",
+            )
+        return {"order": build_order_out(db, order.id), "client_secret": None, "card_setup": False}
+    if datetime.now(timezone.utc) >= _as_utc(order.placed_at) + CHECKOUT_HOLD:
+        _abandon(db, order, payment, store_orders)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This checkout has expired. Your cart still has what's in stock, so please check out again.",
+        )
+    _still_available(db, store_orders)
+
+    try:
+        if payment.stripe_payment_intent_id:
+            intent = stripe_client.retrieve_payment_intent(payment.stripe_payment_intent_id)
+            if intent.status != "requires_payment_method":
+                # Part-way through a bank check: start over on a fresh one,
+                # cancelling the old so only one can ever be paid.
+                _cancel_unpaid_intent(db, payment)
+                intent = stripe_client.create_payment_intent(float(payment.amount), payment.currency, str(order.id), customer_id)
+                payment.stripe_payment_intent_id = intent.id
+                payment.status = intent.status
+                db.commit()
+            return {"order": build_order_out(db, order.id), "client_secret": intent.client_secret, "card_setup": False}
+        # A pod order: save a card, as at checkout.
+        setup = stripe_client.retrieve_setup_intent(payment.stripe_setup_intent_id)
+        if setup.get("status") == "requires_payment_method":
+            client_secret = setup.get("client_secret")
+        else:
+            stripe_customer = membership_service.get_or_create_stripe_customer(db, customer.id)
+            fresh = stripe_client.create_setup_intent(
+                stripe_customer, {"purpose": POD_ORDER_PURPOSE, "profile_id": customer_id, "order_id": str(order.id)}
+            )
+            payment.stripe_setup_intent_id = fresh.id
+            db.commit()
+            client_secret = fresh.client_secret
+        return {"order": build_order_out(db, order.id), "client_secret": client_secret, "card_setup": True}
+    except stripe.error.StripeError as e:
+        logger.warning("Could not resume payment for order %s: %s", order.id, e)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_PROVIDER_UNREACHABLE)
+
+
+def expire_unfinished_checkouts(db: Session, limit: int = 50) -> int:
+    """Scheduled job: checkouts nobody paid for within CHECKOUT_HOLD are
+    removed, their payments cancelled with Stripe. Returns how many."""
+    cutoff = datetime.now(timezone.utc) - CHECKOUT_HOLD
+    candidates = (
+        db.query(Order)
+        .join(Payment, Payment.order_id == Order.id)
+        .filter(
+            Order.abandoned_at.is_(None),
+            Order.placed_at < cutoff,
+            Payment.payment_method != "cash_on_pickup",
+            Payment.status.in_(_UNPAID_INTENT_STATUSES),
+        )
+        .order_by(Order.placed_at)
+        .limit(limit)
+        .all()
+    )
+    removed = 0
+    for order in candidates:
+        store_orders, payment = _store_orders_of(db, order.id), _payment_of(db, order.id)
+        if not checkout_unfinished(order, store_orders, payment):
+            continue
+        try:
+            if _abandon(db, order, payment, store_orders):
+                removed += 1
+        except HTTPException as e:
+            db.rollback()
+            logger.warning("Could not remove unfinished checkout %s: %s", order.id, e.detail)
+    return removed
 
 
 def _record_cancellation(order_id, store_order_id, cancelled_by, cancelled_by_role: str, reason: str | None) -> OrderCancellation:
@@ -666,7 +936,20 @@ def cancel_store_order(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
     if store_order.status == "out_for_delivery":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY)
-    if _pod_orders_closed(db, store_order, db.query(Payment).filter(Payment.order_id == order.id).first()):
+    payment = _payment_of(db, order.id)
+    _block_while_processing(db, order, payment)
+    store_orders = _store_orders_of(db, order.id)
+    # The last farm on a checkout nobody paid for: the whole checkout goes, and
+    # it isn't counted as a cancelled order (older app builds cancel these).
+    if (
+        checkout_unfinished(order, store_orders, payment)
+        and store_order.status == "pending_payment"
+        and sum(1 for so in store_orders if so.status == "pending_payment") == 1
+        and _abandon(db, order, payment, store_orders)
+    ):
+        return build_order_out(db, order.id)
+    db.refresh(store_order)
+    if _pod_orders_closed(db, store_order, _payment_of(db, order.id)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
     if store_order.group_deal_id and store_order.status != "cancelled":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
@@ -714,10 +997,8 @@ def _cancel_one_store_order(
         )
         if sibling_count <= 1:
             # Only store order left on this PaymentIntent — cancel it outright.
-            try:
-                stripe_client.cancel_payment_intent(payment.stripe_payment_intent_id)
-            except stripe.error.StripeError:
-                pass  # already terminal on Stripe's side — proceed with local cancellation regardless
+            # Raises if Stripe says it was paid meanwhile (then it's placed).
+            _cancel_unpaid_intent(db, payment)
             payment.status = "canceled"
             db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason=reason))
         else:
@@ -759,6 +1040,16 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
         )
 
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
+    _block_while_processing(db, order, payment)
+    # A checkout nobody paid for is removed, not counted as a cancelled order
+    # (older app builds cancel these).
+    if checkout_unfinished(order, _store_orders_of(db, order.id), payment) and _abandon(db, order, payment, _store_orders_of(db, order.id)):
+        return build_order_out(db, order.id)
+    store_orders = (
+        db.query(StoreOrder)
+        .filter(StoreOrder.order_id == order.id, StoreOrder.status.in_(_CANCELLABLE_STORE_ORDER_STATUSES))
+        .all()
+    )
     if any(_pod_orders_closed(db, so, payment) for so in store_orders):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
     if any(so.group_deal_id for so in store_orders):
@@ -786,10 +1077,8 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
                 db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
             pending = []
         elif payment and payment.payment_method == "card" and payment.status not in _TERMINAL_PAYMENT_STATUSES:
-            try:
-                stripe_client.cancel_payment_intent(payment.stripe_payment_intent_id)
-            except stripe.error.StripeError:
-                pass  # already terminal on Stripe's side — proceed with local cancellation regardless
+            # Raises if Stripe says it was paid meanwhile (then it's placed).
+            _cancel_unpaid_intent(db, payment)
             payment.status = "canceled"
             db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason=reason))
         for so in pending:
@@ -1070,7 +1359,11 @@ def _money(kept_store_orders: list) -> tuple[float, float]:
 def get_dashboard_summary(
     db: Session, customer_id: str, range_key: str | None = None, period: str | None = None, start: date | None = None
 ) -> dict:
-    orders = db.query(Order).filter(Order.customer_id == customer_id).all()
+    # A checkout nobody paid for isn't an order: not while it waits to be paid,
+    # and not once it's removed (2026-11-14).
+    orders = db.query(Order).filter(Order.customer_id == customer_id, Order.abandoned_at.is_(None)).all()
+    unfinished = _unfinished_order_ids(db, orders)
+    orders = [o for o in orders if o.id not in unfinished]
 
     calendar = period in _CALENDAR_PERIODS
     if calendar:

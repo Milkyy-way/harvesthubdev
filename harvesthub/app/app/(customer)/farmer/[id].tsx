@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
@@ -95,6 +96,24 @@ export default function FarmerDetailScreen() {
       cancelled = true;
     };
   }, [id]);
+
+  // Back from the cart (an item removed there, or the order placed): the
+  // quantities on this page come with the products, so fetch them again, quietly.
+  // The first focus is the load above.
+  const focusedBefore = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!focusedBefore.current) {
+        focusedBefore.current = true;
+        return;
+      }
+      if (!id) return;
+      apiClient.get<ProductItem[]>('/products', { params: { farmer_id: id } }).then(
+        (res) => setProducts(res.data),
+        (err) => console.warn('Could not refresh cart quantities:', err)
+      );
+    }, [id])
+  );
 
   const farmCategories = useMemo(() => {
     const carriedSlugs = new Set(products.map((p) => p.category_slug));

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
+import { openDrivingDirections } from '../../lib/maps';
 import type { StoreOrder } from '../../types/orders';
 import { RatingStars } from './RatingStars';
 import { TextField } from '../TextField';
@@ -14,6 +15,8 @@ type Props = {
   paysAtPickup: boolean; // cash_on_pickup — the order's single payment covers every farm in it
   paymentStatus?: string;
   paymentFailure?: string | null;
+  // Not paid for yet: the order screen offers Pay / Remove instead of Cancel.
+  checkoutUnfinished?: boolean;
   busy: boolean;
   onCancel: () => void;
   onMarkReceived: () => void;
@@ -47,6 +50,7 @@ export function OrderStoreSection({
   paysAtPickup,
   paymentStatus,
   paymentFailure,
+  checkoutUnfinished = false,
   busy,
   onCancel,
   onMarkReceived,
@@ -57,6 +61,10 @@ export function OrderStoreSection({
   const [comment, setComment] = useState('');
   const [commentSent, setCommentSent] = useState(false);
   const isDelivery = storeOrder.fulfillment_method === 'delivery';
+  // Paid, and Stripe is still confirming it: can't be stopped, so no Cancel yet.
+  const processing = paymentStatus === 'processing' && storeOrder.status === 'pending_payment';
+  // The farm's street address comes once the order is placed; until then, its town.
+  const pickupTown = [storeOrder.pickup_address_city, storeOrder.pickup_address_state].filter(Boolean).join(', ');
   const addressLine =
     storeOrder.fulfillment_method === 'pickup'
       ? [storeOrder.pickup_address_street, storeOrder.pickup_address_city, storeOrder.pickup_address_state, storeOrder.pickup_address_zip]
@@ -79,7 +87,11 @@ export function OrderStoreSection({
   // Before its charge, a pod order's amounts are the most it can come to.
   const beforeCharge = podCharge !== null && storeOrder.status === 'pending_payment' && podCharge.status !== 'cancelled';
   const statusLabel =
-    podCharge?.status === 'awaiting'
+    checkoutUnfinished
+      ? 'Not paid yet'
+      : processing
+        ? 'Payment processing'
+        : podCharge?.status === 'awaiting'
       ? 'Charged when orders close'
       : podCharge?.status === 'failed'
         ? 'Card declined'
@@ -98,7 +110,11 @@ export function OrderStoreSection({
   const isDealOrder = !!storeOrder.group_deal_id;
   const dealCardFailed = isDealOrder && podCharge === null && paymentStatus === 'charge_failed' && storeOrder.status === 'pending_payment';
   const canCancel =
-    !podClosed && !isDealOrder && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
+    !checkoutUnfinished &&
+    !processing &&
+    !podClosed &&
+    !isDealOrder &&
+    (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
   const canMarkReceived = storeOrder.status === 'ready_for_pickup';
 
   return (
@@ -122,11 +138,19 @@ export function OrderStoreSection({
         />
         <Text style={styles.fulfillmentText} numberOfLines={2}>
           {storeOrder.fulfillment_method === 'pickup'
-            ? `Pickup at ${addressLine}`
+            ? storeOrder.pickup_address_street
+              ? `Pickup at ${addressLine}`
+              : `Pickup in ${pickupTown || storeOrder.farm_name}. The farm's address shows once you've paid.`
             : storeOrder.delivery?.pod_name
               ? `Delivery ${storeOrder.delivery.window_label} to ${storeOrder.delivery.pod_name}'s drop point: ${addressLine}`
               : `Delivery ${storeOrder.delivery?.window_label ?? ''} to ${addressLine}`}
         </Text>
+        {/* The address is shared once the order is placed, and directions with it. */}
+        {storeOrder.fulfillment_method === 'pickup' && storeOrder.pickup_address_street && storeOrder.status !== 'cancelled' && storeOrder.status !== 'completed' ? (
+          <Pressable onPress={() => openDrivingDirections({ latitude: null, longitude: null, address: addressLine })} hitSlop={8}>
+            <Text style={styles.directionsLink}>Directions</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {dealCardFailed ? (
@@ -198,6 +222,11 @@ export function OrderStoreSection({
       ) : null}
       {isDealOrder && storeOrder.status !== 'cancelled' && storeOrder.status !== 'completed' ? (
         <Text style={styles.hint}>A group deal order can&apos;t be cancelled once the deal has closed.</Text>
+      ) : null}
+      {processing ? (
+        <Text style={styles.hint}>
+          Your payment is being confirmed. That usually takes a few minutes, and you can cancel once it&apos;s through.
+        </Text>
       ) : null}
       {preparing ? (
         <Text style={styles.hint}>The farm is packing your order — it&apos;ll show “Ready for pickup” here when it&apos;s ready.</Text>
@@ -309,6 +338,7 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: '700' },
   fulfillmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
   fulfillmentText: { flex: 1, fontSize: 12, color: colors.textMuted },
+  directionsLink: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
   items: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.xs },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   itemName: { flex: 1, fontSize: 13, color: colors.text, marginRight: spacing.sm },

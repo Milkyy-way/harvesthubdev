@@ -3,7 +3,6 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
-import { openDirections } from '../../lib/maps';
 import { CartLineItemRow } from './CartLineItemRow';
 import { FulfillmentSelector } from './FulfillmentSelector';
 import type { CartFarmGroup } from '../../types/database';
@@ -23,6 +22,8 @@ type Props = {
   onSelectDeliverySlot: (startsAt: string) => void;
   podId: string | null;
   onSelectPod: (podId: string | null) => void;
+  // Only with more than one farm in the cart (2026-11-14): with one, the
+  // footer's Checkout is the same thing.
   readyToPlaceSeparately: boolean;
   onPlaceOrderSeparately: () => void;
 };
@@ -46,15 +47,7 @@ export function CartFarmSection({
   const [imageFailed, setImageFailed] = useState(false);
   const showPhoto = Boolean(group.photo_url) && !imageFailed;
 
-  const pickupAddressLine = [group.address_street, group.address_city, group.address_state, group.address_zip]
-    .filter(Boolean)
-    .join(', ') || null;
-
-  const handleDirections = () => {
-    if (group.latitude !== null && group.longitude !== null) {
-      openDirections(group.latitude, group.longitude, group.farm_name);
-    }
-  };
+  const pickupTown = [group.address_city, group.address_state].filter(Boolean).join(', ') || null;
 
   return (
     <View style={styles.container}>
@@ -97,8 +90,8 @@ export function CartFarmSection({
       <FulfillmentSelector
         method={method}
         onSelectMethod={onSelectMethod}
-        pickupAddressLine={pickupAddressLine}
-        onPressDirections={handleDirections}
+        pickupTown={pickupTown}
+        distanceKm={group.distance_km ?? null}
         delivery={delivery}
         deliverySlot={deliverySlot}
         onSelectDeliverySlot={onSelectDeliverySlot}

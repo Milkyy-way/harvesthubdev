@@ -32,15 +32,14 @@ class CheckoutLineItemOut(BaseModel):
 # grouping (see app/cart/schemas.py) but adds the actual money breakdown.
 # Recomputed fully server-side from the customer's real cart_items on every
 # call; never trusts client-supplied prices or quantities.
+# The farm's street address isn't here: it's shared once the order is placed
+# (2026-11-14), on the order itself. The town and distance are.
 class CheckoutGroupOut(BaseModel):
     farmer_id: str
     farm_name: str
-    address_street: Optional[str]
     address_city: Optional[str]
     address_state: Optional[str]
-    address_zip: Optional[str]
-    latitude: Optional[float]
-    longitude: Optional[float]
+    distance_km: Optional[float] = None
     fulfillment_method: FulfillmentMethod
     items: list[CheckoutLineItemOut]
     subtotal: float
