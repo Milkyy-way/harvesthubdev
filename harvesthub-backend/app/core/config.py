@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Push via Expo's push service. Optional: only needed if "enhanced push
     # security" is switched on for the project at expo.dev.
     EXPO_ACCESS_TOKEN: str | None = None
+    # Where HarvestHub's own alerts go (app/ops/): disputes, refunds made in
+    # Stripe's Dashboard, problem reports, and the daily check. Unset = they're
+    # only recorded in the ops_alerts table.
+    OPS_ALERT_EMAIL: str | None = None
     # Shared secret for the scheduled-jobs endpoint (POST /internal/jobs/run),
     # sent by Cloud Scheduler in the X-Cron-Secret header. Unset = endpoint off.
     CRON_SECRET: str | None = None
@@ -43,7 +47,7 @@ class Settings(BaseSettings):
     # Shown on the public legal pages (/privacy, /terms, /delete-account).
     COMPANY_NAME: str = "HarvestHub"  # the registered company name once the LLC exists
     SUPPORT_EMAIL: str = "support@harvesthubmarket.com"
-    LEGAL_EFFECTIVE_DATE: str = "October 31, 2026"
+    LEGAL_EFFECTIVE_DATE: str = "November 20, 2026"
 
     # Where the shared app link (/app) sends people. IOS_APP_URL can be the
     # App Store link, or until then a TestFlight public link; unset, iPhones

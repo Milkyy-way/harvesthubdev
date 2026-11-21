@@ -35,10 +35,28 @@ def cancel_payment_intent(payment_intent_id: str) -> stripe.PaymentIntent:
     return intent.cancel(cancellation_reason="requested_by_customer")
 
 
-def create_refund(payment_intent_id: str, amount: float, reason: str | None = None) -> stripe.Refund:
-    params = {"payment_intent": payment_intent_id, "amount": to_cents(amount)}
+# Every refund the app makes says so in its metadata, so one made in Stripe's
+# Dashboard can be told apart (app/ops/service.py::record_outside_refunds).
+REFUND_SOURCE = "harvesthub"
+
+
+def create_refund(
+    payment_intent_id: str,
+    amount: float,
+    reason: str | None = None,
+    idempotency_key: str | None = None,
+    store_order_id: str | None = None,
+) -> stripe.Refund:
+    """With an idempotency_key, sending the same refund twice (a retry, two
+    taps) returns the first one instead of refunding again."""
+    metadata = {"source": REFUND_SOURCE}
     if reason:
-        params["metadata"] = {"reason": reason}
+        metadata["reason"] = reason[:500]
+    if store_order_id:
+        metadata["store_order_id"] = store_order_id
+    params = {"payment_intent": payment_intent_id, "amount": to_cents(amount), "metadata": metadata}
+    if idempotency_key:
+        params["idempotency_key"] = idempotency_key
     return stripe.Refund.create(**params)
 
 
@@ -46,9 +64,36 @@ def refund_in_full(payment_intent_id: str) -> stripe.Refund:
     """Everything that was paid, once (the key makes a repeat a no-op)."""
     return stripe.Refund.create(
         payment_intent=payment_intent_id,
-        metadata={"reason": "paid after the order was cancelled"},
+        metadata={"source": REFUND_SOURCE, "reason": "paid after the order was cancelled"},
         idempotency_key=f"refund-late-{payment_intent_id}",
     )
+
+
+def payment_fee(payment_intent_id: str) -> float | None:
+    """What Stripe kept for itself on this payment, or None if Stripe hasn't
+    worked it out yet."""
+    intent = stripe.PaymentIntent.retrieve(payment_intent_id, expand=["latest_charge.balance_transaction"])
+    charge = intent.latest_charge
+    balance = getattr(charge, "balance_transaction", None) if charge else None
+    if not balance or isinstance(balance, str):
+        return None
+    return round(balance.fee / 100, 2)
+
+
+def refunds_of_charge(charge_id: str) -> list[dict]:
+    return [r.to_dict() for r in stripe.Refund.list(charge=charge_id, limit=100).auto_paging_iter()]
+
+
+def payment_intents_since(created_gte: int) -> list[dict]:
+    return [p.to_dict() for p in stripe.PaymentIntent.list(created={"gte": created_gte}, limit=100).auto_paging_iter()]
+
+
+def refunds_since(created_gte: int) -> list[dict]:
+    return [r.to_dict() for r in stripe.Refund.list(created={"gte": created_gte}, limit=100).auto_paging_iter()]
+
+
+def invoices_since(created_gte: int) -> list[dict]:
+    return [i.to_dict() for i in stripe.Invoice.list(created={"gte": created_gte}, limit=100).auto_paging_iter()]
 
 
 def retrieve_refund(refund_id: str) -> stripe.Refund:

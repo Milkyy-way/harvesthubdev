@@ -17,6 +17,9 @@ class CheckoutGroupRequest(BaseModel):
 
 class CheckoutPreviewRequest(BaseModel):
     groups: list[CheckoutGroupRequest]
+    # Paying at the farm takes the service fee off (2026-11-20). Older app
+    # builds don't send it: priced as paying in the app.
+    payment_method: Literal["card", "cash_on_pickup"] = "card"
 
 
 class CheckoutLineItemOut(BaseModel):
@@ -62,6 +65,10 @@ class CheckoutGroupOut(BaseModel):
     pod_fee_low: Optional[float] = None
     charge_at: Optional[str] = None
     service_fee: float
+    # The 30¢ part of service_fee, on one farm, when the items are under $25.
+    fixed_fee: float = 0
+    # Paying at the farm: the service fee taken off (service_fee is then 0).
+    cash_discount: float = 0
     member_savings: float  # service fee Harvest Pass waived for this farm
     tax: float
     farm_total: float
@@ -77,3 +84,10 @@ class CheckoutPreviewResponse(BaseModel):
     member_potential_savings: float
     member_min_subtotal: float
     items_subtotal: float
+    # The 30¢ added when the items come to less than small_order_fee_below.
+    small_order_fee: float = 0
+    small_order_fee_below: float = 25
+    pay_at_farm: bool = False
+    # Paying at the farm isn't offered after 2 missed cash pickups.
+    cash_allowed: bool = True
+    cash_blocked_reason: Optional[str] = None

@@ -1,6 +1,7 @@
 # A customer finds a farm's promo code on its page, orders 2 kale and 1 jam for
 # pickup, applies the code and pays with Stripe's test card.
-# Expected: $15.00 - $1.50 promo + $0.75 service fee + $0.72 DC tax on the jam = $14.97.
+# Expected: $15.00 - $1.50 promo + $1.05 service fee (5% plus 30¢, as the items are
+# under $25) + $0.72 DC tax on the jam = $15.27.
 # Run through harvesthub/e2e/run_ui.py, which empties the cart first and checks
 # the database and Stripe afterwards.
 appId: com.harvesthubmarket.app
@@ -45,7 +46,8 @@ appId: com.harvesthubmarket.app
 - tapOn: "Checkout"
 
 - assertVisible: "Checkout"
-- assertVisible: "\\$16.55"
+- assertVisible: "\\$16.85"
+- assertVisible: "Includes \\$0.30 because this order is under \\$25\\."
 - tapOn: "Promo code for this farm"
 - inputText: "zztest10"
 - hideKeyboard
@@ -55,7 +57,7 @@ appId: com.harvesthubmarket.app
     timeout: 15000
 - assertVisible: "-\\$1.50"
 - assertVisible: "\\$0.72"
-- assertVisible: "\\$14.97"
+- assertVisible: "\\$15.27"
 
 - tapOn: "Card or Google Pay"
 - tapOn: "Place Order"
@@ -70,7 +72,7 @@ appId: com.harvesthubmarket.app
 - tapOn: "ZIP Code"
 - inputText: "22209"
 - hideKeyboard
-# Stripe's Pay button ("Pay $14.97") isn't exposed to automation: tap where it sits.
+# Stripe's Pay button ("Pay $15.27") isn't exposed to automation: tap where it sits.
 - tapOn:
     point: "50%,90%"
 - extendedWaitUntil:

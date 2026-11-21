@@ -69,7 +69,10 @@ def order_placed(ctx: dict) -> Message:
             rows.append((f"  {item['quantity']} × {item['product_name']}", _money(item["line_total"])))
         if so["promo_discount"]:
             rows.append(("  Promo", f"−{_money(so['promo_discount'])}"))
-        if so["service_fee"]:
+        if so.get("cash_discount"):
+            rows.append(("  Service fee", _money(so["cash_discount"])))
+            rows.append(("  Pay-at-farm discount", f"−{_money(so['cash_discount'])}"))
+        elif so["service_fee"]:
             rows.append(("  Service fee", _money(so["service_fee"])))
         if so["delivery_fee"]:
             rows.append(("  Delivery", _money(so["delivery_fee"])))
@@ -81,7 +84,9 @@ def order_placed(ctx: dict) -> Message:
     paragraphs = [
         "Thanks for your order! Here's your receipt.",
         "Pay in cash when you pick up." if cash else "Paid by card.",
-        "We'll let you know as soon as each farm has your order ready.",
+        "We'll let you know as soon as each farm has your order ready. For a pickup you'll get a 4-digit code: "
+        "show it at the farm, and they'll hand over your order.",
+        *([] if cash else ["If you cancel, you get everything back except the service fee."]),
     ]
     for so in order["store_orders"]:
         if so["fulfillment_method"] == "delivery" and so.get("delivery"):
@@ -105,23 +110,215 @@ def order_placed(ctx: dict) -> Message:
     )
 
 
+def _as_dt(value) -> datetime:
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _clock(value) -> str:
+    """'3:45 PM' in the marketplace's time."""
+    local = _as_dt(value).astimezone(LOCAL_TZ)
+    hour = local.hour % 12 or 12
+    minute = f":{local.minute:02d}" if local.minute else ""
+    return f"{hour}{minute} {'AM' if local.hour < 12 else 'PM'}"
+
+
+def _day_and_clock(value) -> str:
+    """'today at 3:45 PM', else 'Tue, Nov 24 at 9 AM'."""
+    local = _as_dt(value).astimezone(LOCAL_TZ)
+    if local.date() == datetime.now(LOCAL_TZ).date():
+        return f"today at {_clock(value)}"
+    return f"{local:%a}, {local:%b} {local.day} at {_clock(value)}"
+
+
+_CODE_HINT = "Show this code at the farm and they'll hand over your order. Only share it once the order is in your hands."
+
+
 def order_ready(ctx: dict) -> Message:
-    """ctx: farm_name, order_id, pickup_address, cash_total (None for card)."""
+    """ctx: farm_name, order_id, pickup_address, cash_total (None for card),
+    code, starts_at, ends_at, later (the window starts later, not now)."""
     farm = ctx["farm_name"]
     cash = ctx.get("cash_total")
+    code = ctx.get("code")
     pay = f" Bring {_money(cash)} in cash." if cash else ""
     where = f" at {ctx['pickup_address']}" if ctx.get("pickup_address") else ""
+    if ctx.get("later"):
+        when = f"from {_day_and_clock(ctx['starts_at'])} until {_clock(ctx['ends_at'])}"
+        title = "Your pickup time is set"
+        intro = f"{farm} has your order packed. Pick it up{where} {when}."
+    else:
+        when = f"by {_clock(ctx['ends_at'])}"
+        title = "Your order is ready for pickup"
+        intro = f"Good news — {farm} has your order packed and ready for pickup{where}. Please pick it up {when}."
     return Message(
-        title="Your order is ready for pickup",
-        body=f"{farm} has your order ready.{pay}",
+        title=title,
+        body=f"Pick up at {farm} {when}. Your code: {code}.{pay}",
         channels=(PUSH, EMAIL, SMS),
         url=f"/(customer)/orders/{ctx['order_id']}",
         email_paragraphs=[
-            f"Good news — {farm} has your order packed and ready for pickup{where}.",
+            intro,
+            f"Your pickup code: {code}",
+            _CODE_HINT,
             *([f"Please bring {_money(cash)} in cash."] if cash else []),
-            "Once you have it, tap “Mark as received” on the order in the app.",
+            "Need more time? You can add one extra hour from the order in the app. If it isn't picked up in time, "
+            "it goes back on sale" + ("." if cash else " and isn't refunded."),
         ],
-        sms=_sms(f"Your order from {farm} is ready for pickup{where}.{pay}"),
+        sms=_sms(f"Your order from {farm} is ready for pickup{where} {when}. Code: {code}.{pay}"),
+    )
+
+
+def pickup_open(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, code, ends_at, cash_total. The window the farm
+    set for later has started."""
+    farm = ctx["farm_name"]
+    cash = ctx.get("cash_total")
+    pay = f" Bring {_money(cash)} in cash." if cash else ""
+    return Message(
+        title="Your order is ready for pickup now",
+        body=f"Pick up at {farm} by {_clock(ctx['ends_at'])}. Your code: {ctx['code']}.{pay}",
+        channels=(PUSH, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        sms=_sms(f"Your order from {farm} is ready now. Pick up by {_clock(ctx['ends_at'])}. Code: {ctx['code']}.{pay}"),
+    )
+
+
+def pickup_reminder(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, code, ends_at. One hour left."""
+    return Message(
+        title="1 hour left to pick up",
+        body=f"Your order from {ctx['farm_name']} is waiting until {_clock(ctx['ends_at'])}. Your code: {ctx['code']}.",
+        channels=(PUSH,),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+    )
+
+
+def pickup_last_call(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, ends_at. 15 minutes left, and the one extra
+    hour still available."""
+    farm = ctx["farm_name"]
+    return Message(
+        title="15 minutes left. Need another hour?",
+        body=f"Your order from {farm} is waiting until {_clock(ctx['ends_at'])}. Tap to add one more hour.",
+        channels=(PUSH, EMAIL, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"Your order from {farm} is waiting for you until {_clock(ctx['ends_at'])}.",
+            "Running late? Open the order in the app and tap “Add 1 hour”. You can do this once.",
+            "If it isn't picked up in time, it goes back on sale.",
+        ],
+        sms=_sms(f"15 minutes left to pick up your order from {farm}. Need more time? Add 1 hour in the app."),
+    )
+
+
+def pickup_final(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, ends_at. 15 minutes left of the extra hour."""
+    farm = ctx["farm_name"]
+    return Message(
+        title="15 minutes left to pick up",
+        body=f"Your order from {farm} is waiting until {_clock(ctx['ends_at'])}. This is the last reminder.",
+        channels=(PUSH, SMS),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        sms=_sms(f"15 minutes left to pick up your order from {farm} (until {_clock(ctx['ends_at'])})."),
+    )
+
+
+def pickup_missed(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, cash (bool). The window ended."""
+    farm = ctx["farm_name"]
+    if ctx.get("cash"):
+        body = f"Your order from {farm} wasn't picked up in time, so it went back on sale. Did you collect it? Let us know in the app."
+        paragraphs = [
+            f"Your order from {farm} wasn't picked up by the end of its pickup time, so it went back on sale. "
+            "You haven't paid anything.",
+            "Did you actually collect it? Please tell us on the order in the app.",
+            "After 2 cash orders that aren't picked up, you'll need to pay in the app.",
+        ]
+    else:
+        body = f"Your order from {farm} wasn't picked up in time. As our pickup policy says, it isn't refunded."
+        paragraphs = [
+            f"Your order from {farm} wasn't picked up by the end of its pickup time, so it went back on sale.",
+            "As our pickup policy says, orders that aren't picked up aren't refunded. If something went wrong "
+            "(for example, the farm was closed when you came), report a problem on the order within 24 hours.",
+        ]
+    return Message(
+        title="Your order wasn't picked up",
+        body=body,
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=paragraphs,
+    )
+
+
+def picked_up(ctx: dict) -> Message:
+    """ctx: farm_name, order_id. The farm confirmed the handover."""
+    return Message(
+        title="Enjoy your order!",
+        body=f"You picked up your order from {ctx['farm_name']}. Tap to rate it.",
+        channels=(PUSH,),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+    )
+
+
+def order_not_ready(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, refund. A day on, the farm hasn't packed it."""
+    farm = ctx["farm_name"]
+    refund = ctx.get("refund") or 0
+    back = f" for a full refund of {_money(refund)}" if refund else ""
+    return Message(
+        title="Your order isn't ready yet",
+        body=f"{farm} hasn't packed your order yet. You can keep waiting, or cancel it{back}.",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"It's been a day and {farm} hasn't packed your order yet.",
+            f"You can keep waiting, or cancel it from the order in the app{back}.",
+        ],
+    )
+
+
+def problem_received(ctx: dict) -> Message:
+    """ctx: farm_name, order_id."""
+    return Message(
+        title="We got your report",
+        body=f"Thanks for telling us about your order from {ctx['farm_name']}. We'll look into it within 2 business days.",
+        channels=(EMAIL,),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"Thanks for telling us what went wrong with your order from {ctx['farm_name']}.",
+            "We'll look into it and get back to you within 2 business days.",
+        ],
+    )
+
+
+def problem_refunded(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, amount, note."""
+    amount = _money(ctx["amount"])
+    return Message(
+        title="We've refunded you",
+        body=f"We've refunded {amount} for your order from {ctx['farm_name']}.",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"We looked into the problem with your order from {ctx['farm_name']} and refunded {amount} to your card.",
+            *([ctx["note"]] if ctx.get("note") else []),
+            "It can take 5–10 business days to appear.",
+        ],
+    )
+
+
+def problem_declined(ctx: dict) -> Message:
+    """ctx: farm_name, order_id, note."""
+    return Message(
+        title="About your report",
+        body=f"We looked into your order from {ctx['farm_name']}. Open the order to see what we found.",
+        channels=(PUSH, EMAIL),
+        url=f"/(customer)/orders/{ctx['order_id']}",
+        email_paragraphs=[
+            f"We looked into the problem you reported with your order from {ctx['farm_name']}, and we couldn't refund it.",
+            *([ctx["note"]] if ctx.get("note") else []),
+            "If you have more to tell us, reply to this email.",
+        ],
     )
 
 
@@ -692,7 +889,8 @@ def new_order(ctx: dict) -> Message:
                 "It joins that window's delivery run — you'll find it under Deliveries in the app."
                 if ctx.get("delivery_label")
                 else "Open the HarvestHub app to see the items and the customer's details, then tap “Mark ready” "
-                "once it's packed so they know to come by."
+                "once it's packed so they know to come by. When they arrive, ask for their 4-digit code and enter "
+                "it in the app to hand the order over."
             ),
         ],
         sms=_sms(f"New order — {summary}{paid}. Open the app to pack it."),
@@ -724,6 +922,66 @@ def order_cancelled_by_customer(ctx: dict) -> Message:
         email_paragraphs=[
             f"A customer cancelled their order ({summary}), so there's no need to pack it.",
             "Any stock it had reserved has been put back on your products.",
+        ],
+    )
+
+
+def pickup_missed_farmer(ctx: dict) -> Message:
+    """ctx: item_count, total, cash (bool)."""
+    summary = f"{_items(ctx['item_count'])} · {_money(ctx['total'])}"
+    paid = "It was a cash order, so nothing was collected." if ctx.get("cash") else "It was paid by card, so you're still paid for it."
+    return Message(
+        title="An order wasn't picked up",
+        body=f"The pickup time ended ({summary}). The items are back on your products. {paid}",
+        channels=(PUSH, EMAIL),
+        url="/(farmer)/(tabs)/orders",
+        email_paragraphs=[
+            f"The pickup time ended for an order ({summary}) without it being picked up.",
+            f"Its items are back on your products. {paid}",
+            "If the customer turns up in the next 24 hours, you can still hand it over: find it under Completed and enter their code.",
+        ],
+    )
+
+
+def pickup_extended(ctx: dict) -> Message:
+    """ctx: customer_first, ends_at."""
+    who = ctx.get("customer_first") or "A customer"
+    return Message(
+        title="Pickup extended by an hour",
+        body=f"{who} needs more time. Their pickup now ends at {_clock(ctx['ends_at'])}.",
+        channels=(PUSH,),
+        url="/(farmer)/(tabs)/orders",
+    )
+
+
+def order_cancelled_not_ready(ctx: dict) -> Message:
+    """ctx: item_count, total, fee."""
+    summary = f"{_items(ctx['item_count'])} · {_money(ctx['total'])}"
+    fee = ctx.get("fee") or 0
+    cost = f" Its {_money(fee)} service fee comes off your next payout." if fee else ""
+    return Message(
+        title="An order was cancelled",
+        body=f"It wasn't ready within 24 hours, so the customer cancelled it ({summary}).{cost}",
+        channels=(PUSH, EMAIL),
+        url="/(farmer)/(tabs)/orders",
+        email_paragraphs=[
+            f"An order ({summary}) wasn't marked ready within 24 hours, so the customer cancelled it and got a full refund.{cost}",
+            "Any stock it had reserved has been put back on your products.",
+        ],
+    )
+
+
+def problem_refund_farmer(ctx: dict) -> Message:
+    """ctx: amount (what comes off the payout), reason, items."""
+    return Message(
+        title="A customer reported a problem",
+        body=f"We refunded part of an order. {_money(ctx['amount'])} comes off your next payout.",
+        channels=(PUSH, EMAIL),
+        url="/(farmer)/earnings",
+        email_paragraphs=[
+            f"A customer reported a problem with an order ({ctx.get('reason') or 'a problem'}), and we refunded them"
+            + (f" for: {ctx['items']}." if ctx.get("items") else "."),
+            f"Your share of that, {_money(ctx['amount'])}, comes off your next payout. HarvestHub gives back its commission on it.",
         ],
     )
 
@@ -774,6 +1032,20 @@ def payout_sent(ctx: dict) -> Message:
 BUILDERS = {
     "order_placed": order_placed,
     "order_ready": order_ready,
+    "pickup_open": pickup_open,
+    "pickup_reminder": pickup_reminder,
+    "pickup_last_call": pickup_last_call,
+    "pickup_final": pickup_final,
+    "pickup_missed": pickup_missed,
+    "picked_up": picked_up,
+    "order_not_ready": order_not_ready,
+    "problem_received": problem_received,
+    "problem_refunded": problem_refunded,
+    "problem_declined": problem_declined,
+    "pickup_missed_farmer": pickup_missed_farmer,
+    "pickup_extended": pickup_extended,
+    "order_cancelled_not_ready": order_cancelled_not_ready,
+    "problem_refund_farmer": problem_refund_farmer,
     "order_cancelled_by_farm": order_cancelled_by_farm,
     "free_period_ending": free_period_ending,
     "free_period_ended": free_period_ended,

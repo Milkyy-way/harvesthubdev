@@ -21,7 +21,8 @@ const DELIVERY_REASONS = [
   { value: 'other', label: 'Other…' },
 ];
 
-export type CancellableOrder = Pick<FarmerOrder, 'customer_name' | 'total' | 'service_fee' | 'payment_method'>;
+export type CancellableOrder = Pick<FarmerOrder, 'customer_name' | 'total' | 'service_fee' | 'payment_method'> &
+  Partial<Pick<FarmerOrder, 'cancel_fee'>>;
 
 type Props = {
   order: CancellableOrder | null; // null = closed
@@ -59,7 +60,7 @@ export function CancelOrderSheet({ order, submitting, onClose, onConfirm, delive
           {order ? (
             <Text style={styles.body}>
               {paidByCard
-                ? `${order.customer_name ?? 'The customer'} gets a full refund of $${order.total.toFixed(2)} to their card. The $${order.service_fee.toFixed(2)} service fee will be deducted from your next payout.`
+                ? `${order.customer_name ?? 'The customer'} gets a full refund to their card. The $${(order.cancel_fee ?? order.service_fee).toFixed(2)} service fee will be deducted from your next payout.`
                 : 'This is a cash-on-pickup order and the customer hasn’t paid yet, so nothing is refunded and there’s no fee.'}
             </Text>
           ) : null}

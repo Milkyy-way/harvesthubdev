@@ -27,12 +27,38 @@ class CreateOrderRequest(BaseModel):
 
 
 class OrderItemOut(BaseModel):
+    id: Optional[str] = None  # the order line, for "Report a problem"
     product_id: Optional[str]
     product_name: str
     unit: str
     unit_price: float
     quantity: int
     line_total: float
+
+
+class PickupOut(BaseModel):
+    """A pickup's window and code (0042, app/pickup/)."""
+
+    ready_at: Optional[str] = None  # when the farm tapped Ready
+    starts_at: Optional[str] = None
+    ends_at: Optional[str] = None
+    extended: bool = False
+    can_extend: bool = False  # the one extra hour, while the window is open
+    # Shown while it waits for pickup, and for a day after "not picked"
+    # (the farm can still hand it over then).
+    code: Optional[str] = None
+    picked_up_at: Optional[str] = None
+    not_picked_at: Optional[str] = None
+    # Not packed by then: the customer can cancel with everything back.
+    free_cancel_from: Optional[str] = None
+
+
+class ProblemOut(BaseModel):
+    status: Literal["open", "refunded", "declined", "handled"]
+    reason: str
+    created_at: Optional[str] = None
+    refund_amount: Optional[float] = None
+    note: Optional[str] = None  # HarvestHub's note to the customer
 
 
 class StoreOrderOut(BaseModel):
@@ -56,15 +82,32 @@ class StoreOrderOut(BaseModel):
     delivery_fee: float
     service_fee: float
     member_savings: float  # Harvest Pass — the waived service fee
+    # The 30¢ part of service_fee (a payment under $25), and, paid at the
+    # farm, the service fee taken off as a discount (2026-11-20).
+    fixed_fee: float = 0
+    cash_discount: float = 0
     tax: float
     total: float
     refunded_amount: float
-    status: Literal["pending_payment", "paid", "ready_for_pickup", "out_for_delivery", "completed", "cancelled"]
+    status: Literal["pending_payment", "paid", "ready_for_pickup", "out_for_delivery", "completed", "not_picked", "cancelled"]
     cancelled_by: Optional[Literal["customer", "farmer", "admin"]]
     cancellation_reason: Optional[str]
     items: list[OrderItemOut]
     my_rating: Optional[int]
     delivery: Optional[DeliveryProgressOut] = None  # delivery orders only
+    # What the customer can do now (app/orders/service.py::cancel_terms):
+    # cancel, and what would come back; or why not.
+    can_cancel: bool = False
+    cancel_blocked_reason: Optional[str] = None
+    cancel_refund: float = 0
+    cancel_keeps_service_fee: bool = False
+    pickup: Optional[PickupOut] = None  # pickup orders only
+    completed_at: Optional[str] = None  # handed over: picked up, or delivered
+    problem: Optional[ProblemOut] = None
+    can_report_problem: bool = False
+    report_until: Optional[str] = None
+    # A cash order not picked up: "Did you collect this order?"
+    ask_collected: bool = False
 
 
 class PaymentOut(BaseModel):
@@ -119,6 +162,21 @@ class DiscardResponse(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class CollectedRequest(BaseModel):
+    collected: bool
+
+
+class ProblemItemIn(BaseModel):
+    item_id: str
+    quantity: int
+
+
+class ProblemReportRequest(BaseModel):
+    reason: Literal["missing_item", "damaged", "wrong_item", "quality", "farm_closed", "other"]
+    details: Optional[str] = None
+    items: list[ProblemItemIn] = []
 
 
 class ReorderResponse(BaseModel):

@@ -57,6 +57,8 @@ export interface CheckoutGroup {
   pod_fee_low: number | null;
   charge_at: string | null;
   service_fee: number;
+  fixed_fee?: number; // the 30¢ part of service_fee, when the items are under $25
+  cash_discount?: number; // paying at the farm: the service fee taken off
   member_savings: number; // service fee Harvest Pass waived for this farm
   tax: number;
   farm_total: number;
@@ -72,4 +74,11 @@ export interface CheckoutPreviewResponse {
   member_potential_savings: number;
   member_min_subtotal: number;
   items_subtotal: number;
+  // The 30¢ added when the items come to less than small_order_fee_below.
+  small_order_fee?: number;
+  small_order_fee_below?: number;
+  pay_at_farm?: boolean;
+  // Paying at the farm isn't offered after 2 missed cash pickups.
+  cash_allowed?: boolean;
+  cash_blocked_reason?: string | null;
 }

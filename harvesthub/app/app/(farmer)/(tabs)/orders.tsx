@@ -9,12 +9,14 @@ import { HeroShell } from '../../../components/customer/HeroShell';
 import { LockedTabNotice, TabNotice } from '../../../components/farmer/TabNotice';
 import { FarmerOrderCard } from '../../../components/farmer/FarmerOrderCard';
 import { CancelOrderSheet } from '../../../components/farmer/CancelOrderSheet';
+import { ReadySheet } from '../../../components/farmer/ReadySheet';
+import { HandOverSheet, type HandOver } from '../../../components/farmer/HandOverSheet';
 import type { FarmerOrder, FarmerOrderView, FarmerOrdersResponse } from '../../../types/farmer';
 
 const VIEWS: { key: FarmerOrderView; label: string; empty: string }[] = [
   { key: 'to_prepare', label: 'To prepare', empty: 'No orders to prepare right now. New orders show up here as soon as they’re placed.' },
   { key: 'ready', label: 'Ready / out', empty: 'Nothing waiting for pickup or out for delivery.' },
-  { key: 'completed', label: 'Done', empty: 'Picked-up and delivered orders will appear here.' },
+  { key: 'completed', label: 'Done', empty: 'Picked-up and delivered orders, and ones nobody picked up, will appear here.' },
   { key: 'cancelled', label: 'Cancelled', empty: 'No cancelled orders.' },
 ];
 
@@ -31,6 +33,9 @@ export default function FarmerOrders() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<FarmerOrder | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [readyTarget, setReadyTarget] = useState<FarmerOrder | null>(null);
+  const [handOverTarget, setHandOverTarget] = useState<FarmerOrder | null>(null);
+  const [handOverError, setHandOverError] = useState<string | null>(null);
 
   const load = useCallback(async (which: FarmerOrderView) => {
     try {
@@ -57,13 +62,35 @@ export default function FarmerOrders() {
     setView(next);
   };
 
-  const markReady = async (order: FarmerOrder) => {
+  // Ready now, or from a later time (2026-11-20).
+  const markReady = async (readyFrom: Date | null) => {
+    const order = readyTarget;
+    if (!order) return;
     setBusyId(order.id);
     try {
-      await apiClient.post(`/farmers/me/orders/${order.id}/ready`);
+      await apiClient.post(`/farmers/me/orders/${order.id}/ready`, { ready_from: readyFrom ? readyFrom.toISOString() : null });
+      setReadyTarget(null);
       await load(view);
     } catch (err) {
       Alert.alert('Could not update order', apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // The customer's code (or, without it, their phone's last 4 digits).
+  const handOver = async (details: HandOver) => {
+    const order = handOverTarget;
+    if (!order) return;
+    setBusyId(order.id);
+    setHandOverError(null);
+    try {
+      await apiClient.post(`/farmers/me/orders/${order.id}/handover`, details);
+      setHandOverTarget(null);
+      await load(view);
+      Alert.alert('Handed over', `${order.customer_name ?? 'The customer'} has their order.`);
+    } catch (err) {
+      setHandOverError(apiErrorMessage(err, 'Please try again.'));
     } finally {
       setBusyId(null);
     }
@@ -144,7 +171,11 @@ export default function FarmerOrders() {
           <FarmerOrderCard
             order={item}
             busy={busyId === item.id}
-            onMarkReady={() => markReady(item)}
+            onMarkReady={() => setReadyTarget(item)}
+            onHandOver={() => {
+              setHandOverError(null);
+              setHandOverTarget(item);
+            }}
             onCancel={() => setCancelTarget(item)}
           />
         )}
@@ -154,6 +185,14 @@ export default function FarmerOrders() {
         submitting={cancelling}
         onClose={() => setCancelTarget(null)}
         onConfirm={confirmCancel}
+      />
+      <ReadySheet order={readyTarget} submitting={busyId !== null && busyId === readyTarget?.id} onClose={() => setReadyTarget(null)} onConfirm={markReady} />
+      <HandOverSheet
+        order={handOverTarget}
+        submitting={busyId !== null && busyId === handOverTarget?.id}
+        error={handOverError}
+        onClose={() => setHandOverTarget(null)}
+        onConfirm={handOver}
       />
     </View>
   );

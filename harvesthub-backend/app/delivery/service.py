@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 KM_PER_MILE = 1.609344
 BOOKING_HORIZON_DAYS = 14
 PHOTO_BUCKET = "delivery-photos"
-PHOTO_RETENTION = timedelta(days=30)
+# As long as a customer's bank can take a dispute (decided 2026-11-19): the
+# photo is the proof it was delivered. Was 30 days.
+PHOTO_RETENTION = timedelta(days=120)
 _PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "heic")
 _MAX_WINDOWS = 21
 # An order with cold items, left at a drop point: collect it within this long.
@@ -902,6 +904,7 @@ def mark_delivered(db: Session, farmer_id, run_id: str, stop_id: str, photo_path
     delivered = db.query(StoreOrder).filter(StoreOrder.delivery_stop_id == stop.id, StoreOrder.status == "out_for_delivery").all()
     for so in delivered:
         so.status = "completed"
+        so.completed_at = stop.delivered_at  # "Report a problem" is open for 24 hours from here
         payouts_service.create_ledger_entry_for_completion(db, so)
     _finish_if_done(db, run)
     db.commit()
@@ -1139,7 +1142,7 @@ def photo_url(db: Session, store_order: StoreOrder) -> str | None:
 def customer_photo_paths(db: Session, customer_id) -> list[str]:
     """Photos of a customer's doorstep — deleted with their account. A pod's
     drop point isn't only theirs, so its photo stays for the other members
-    (and goes after 30 days like every other)."""
+    (and goes after 120 days like every other)."""
     rows = (
         db.query(DeliveryStop.photo_path)
         .join(StoreOrder, StoreOrder.delivery_stop_id == DeliveryStop.id)
@@ -1151,7 +1154,7 @@ def customer_photo_paths(db: Session, customer_id) -> list[str]:
 
 
 def purge_old_photos(db: Session, limit: int = 100) -> int:
-    """Scheduled job: delivery photos are only kept 30 days."""
+    """Scheduled job: delivery photos are only kept PHOTO_RETENTION (120 days)."""
     if not supabase_admin.is_configured():
         return 0
     stops = (

@@ -107,10 +107,12 @@ def create_order_for(
         promo_discount=0,
         delivery_fee=priced["delivery_fee"],
         service_fee=priced["service_fee"],
+        fixed_fee=priced["fixed_fee"],
         member_savings=priced["member_savings"],
         tax=priced["tax"],
         total=priced["total"],
         status="pending_payment",
+        stock_held=True,  # set aside by the deal
     )
     db.add(store_order)
     db.flush()

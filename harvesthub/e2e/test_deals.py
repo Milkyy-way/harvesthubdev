@@ -19,7 +19,7 @@ import stripe
 
 import hh
 from seed import FARMS, customer_email
-from shop import products, stock
+from shop import hand_over, products, stock
 
 r = hh.Report("deals")
 farm_b, farm_c = hh.User(FARMS[1]["email"]), hh.User(FARMS[2]["email"])
@@ -152,7 +152,7 @@ expect_refused("a deal order can't be cancelled once the deal has closed",
 so = done[c12.id]["so_id"]
 farm_b.post(f"/farmers/me/orders/{so}/ready")
 oid = hh.q1("select order_id::text as o from store_orders where id = %(s)s", s=so)["o"]
-c12.post(f"/orders/{oid}/store/{so}/complete")
+hand_over(farm_b, c12, oid, so)
 e = hh.q1("select gross_amount::float as gross, commission_amount::float as commission from farmer_ledger_entries where store_order_id = %(s)s", s=so)
 r.check("ledger: a $4.50 bag, $0.45 commission, like any sale", e and (e["gross"], e["commission"]) == (4.5, 0.45), e)
 

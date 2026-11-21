@@ -1,0 +1,32 @@
+# The farmer hands an order over with the customer's 4-digit code
+# (2026-11-20): a wrong code first, then the right one. Pass EMAIL, PASSWORD,
+# CUSTOMER (the customer's name) and CODE.
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- tapOn: "Orders"
+- tapOn: "Ready / out.*"
+- extendedWaitUntil:
+    visible: ${CUSTOMER}
+    timeout: 30000
+- assertVisible: "Pickup until .*"
+- tapOn: "Enter pickup code"
+- extendedWaitUntil:
+    visible: "Hand over the order"
+    timeout: 10000
+- tapOn: "Pickup code"
+- inputText: "0000"
+- tapOn: "Hand over"
+- extendedWaitUntil:
+    visible: "That code doesn.t match\\..*"
+    timeout: 15000
+- tapOn: "Pickup code"
+- eraseText: 4
+- inputText: ${CODE}
+- tapOn: "Hand over"
+- extendedWaitUntil:
+    visible: "Handed over"
+    timeout: 20000
+- tapOn: "OK"
+- takeScreenshot: farmer_hand_over_done

@@ -17,6 +17,7 @@ harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_delivery_pass.py   # 
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_pods.py           # Neighborhood Pods: join, saved cards, fee split, drop-point delivery
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_deals.py          # group deals: goal met and missed, regular-price offer
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_account.py        # saved places, ratings, deleting an account, a pod pausing
+harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_pickup.py         # pickup codes, the extra hour, not picked up, report a problem, cash no-shows
 ```
 
 Each run prints PASS or FAIL per check and saves a copy in `results/`.
@@ -32,13 +33,15 @@ harvesthub-backend/venv/Scripts/python harvesthub/e2e/run_ui.py cancel   # only 
 
 | Flow | What it does on screen |
 | --- | --- |
-| `customer_promo_order.yaml` | Customer 8 opens Farm A, sees its promo, orders 2 kale and 1 jam, applies ZZTEST10 and pays $14.97 with a test card |
+| `customer_promo_order.yaml` | Customer 8 opens Farm A, sees its promo, orders 2 kale and 1 jam, applies ZZTEST10 and pays $15.27 with a test card (5% fee plus 30¢ under $25) |
 | `customer_signup.yaml` | A new customer signs up, using Google's address suggestions, and reaches Home |
 | `farmer_signup_application.yaml` | A new farmer signs up, fills in farm details and uploads 4 documents. The runner then approves the farm, as you would in Supabase |
 | `farmer_product_promo.yaml` | That farm adds a product with a photo, makes a promo code, pauses it and turns it back on |
-| `farmer_mark_ready.yaml` | The runner places a paid order; the farmer sees it, with earnings at 10%, and marks it ready |
-| `customer_pickup_rate.yaml` | Customer 3 marks that order received and rates the farm 4 stars |
-| `customer_cancel.yaml` | The runner places a paid order; customer 3 cancels it and sees it refunded |
+| `farmer_mark_ready.yaml` | The runner places a paid order; the farmer sees it, with earnings at 10%, and marks it ready now |
+| `customer_pickup_code.yaml` | Customer 3 sees that order's 4-digit pickup code and window, and no Cancel |
+| `farmer_hand_over.yaml` | The farmer enters a wrong code (refused), then the customer's code, and hands the order over |
+| `customer_pickup_rate.yaml` | Customer 3 sees it picked up and rates the farm 4 stars |
+| `customer_cancel.yaml` | The runner places a paid order; customer 3 cancels it and sees it refunded, less the service fee |
 
 Each full run signs up a new customer and a new farm, named with the date and time ("ZZ Autotest UI Farm 11131900"). Farms from earlier runs are suspended, so customers don't see them pile up. The sample photo they upload is `autotest-photo.png`; the runner copies it to the phone's Downloads.
 

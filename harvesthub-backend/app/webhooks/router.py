@@ -6,11 +6,21 @@ from app.core.database import get_db
 from app.payments import stripe_client
 from app.orders import service as orders_service
 from app.membership import service as membership_service
+from app.ops import service as ops_service
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 # Harvest Pass: any change to a subscription re-reads it from Stripe and
 # mirrors it onto our memberships row (app/membership/service.py).
+# A customer's bank disputing a payment (recorded and emailed, app/ops/).
+_DISPUTE_EVENTS = (
+    "charge.dispute.created",
+    "charge.dispute.updated",
+    "charge.dispute.closed",
+    "charge.dispute.funds_withdrawn",
+    "charge.dispute.funds_reinstated",
+)
+
 _SUBSCRIPTION_EVENTS = (
     "customer.subscription.created",
     "customer.subscription.updated",
@@ -62,5 +72,11 @@ async def stripe_webhook(
         orders_service.reconcile_payment_intent(db, "processing", obj["id"])
     elif event["type"] == "payment_intent.canceled":
         orders_service.reconcile_payment_intent(db, "canceled", obj["id"])
+    elif event["type"] in _DISPUTE_EVENTS:
+        ops_service.record_dispute(db, obj)
+    elif event["type"] == "charge.refunded":
+        # Refunds the app made are skipped; one made in Stripe's Dashboard is
+        # recorded and emailed.
+        ops_service.record_outside_refunds(db, obj)
 
     return {"received": True}

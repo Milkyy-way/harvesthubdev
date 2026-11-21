@@ -11,11 +11,13 @@ from app.deals import closing as deals_closing
 from app.delivery import service as delivery_service
 from app.farmers import service as farmers_service
 from app.notifications import jobs as notification_jobs
+from app.ops import service as ops_service
 from app.orders import service as orders_service
+from app.pickup import service as pickup_service
 from app.pods import service as pods_service
 
-# Periodic work, run by Cloud Scheduler every 15 minutes (LAUNCH_ANDROID.md
-# step 5) — not the app. Authenticated by a shared secret (CRON_SECRET), and
+# Periodic work, run by Cloud Scheduler every 5 minutes (LAUNCH_ANDROID.md
+# step 5; it was 15 until the pickup reminders, 2026-11-20) — not the app. Authenticated by a shared secret (CRON_SECRET), and
 # off entirely when that isn't set. Every task is safe to repeat.
 router = APIRouter(prefix="/internal", tags=["internal"], include_in_schema=False)
 
@@ -30,7 +32,10 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         **pods_service.run_jobs(db),
         # Group deals: opening to members, then everyone; charging at the deadline.
         **deals_closing.run(db),
-        # Checkouts nobody paid for within an hour: removed, payment cancelled.
+        # Pickups: windows opening, reminders, "not picked" when they end.
+        **pickup_service.run(db),
+        # Checkouts nobody paid for within 30 minutes: removed, payment
+        # cancelled, stock given back.
         "checkouts_expired": orders_service.expire_unfinished_checkouts(db),
         # Refunds Stripe didn't finish at once: how they ended.
         "refunds_settled": orders_service.sync_pending_refunds(db),
@@ -38,6 +43,11 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         "homes_regeocoded": customers_service.refresh_stale_locations(db),
         "places_regeocoded": customer_places.refresh_stale(db),
         "farms_regeocoded": farmers_service.refresh_stale_locations(db),
-        # Photos of customers' doorsteps are only kept 30 days.
+        # Photos of customers' doorsteps are kept 120 days (as long as a
+        # customer's bank can take a dispute), then deleted.
         "delivery_photos_deleted": delivery_service.purge_old_photos(db),
+        # What Stripe kept on each payment.
+        "stripe_fees_saved": ops_service.fill_stripe_fees(db),
+        # Every morning: Stripe compared with the database, emailed to us.
+        "daily_check_sent": ops_service.daily_check(db),
     }

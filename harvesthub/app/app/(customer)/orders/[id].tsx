@@ -10,6 +10,7 @@ import { apiErrorMessage } from '../../../lib/apiError';
 import { discardCheckout, useOrderPayment } from '../../../lib/orderPayment';
 import { OrderStoreSection } from '../../../components/customer/OrderStoreSection';
 import { OrderPassNote } from '../../../components/customer/OrderPassNote';
+import { ReportProblemSheet, type ProblemSubmission } from '../../../components/customer/ReportProblemSheet';
 import type { MembershipOverview } from '../../../types/membership';
 import type { Order, ResumePaymentResponse, StoreOrder } from '../../../types/orders';
 
@@ -24,6 +25,8 @@ export default function OrderDetailScreen() {
   const [busyStoreOrderId, setBusyStoreOrderId] = useState<string | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [ratingStoreOrderId, setRatingStoreOrderId] = useState<string | null>(null);
+  const [reporting, setReporting] = useState<StoreOrder | null>(null);
+  const [sendingReport, setSendingReport] = useState(false);
   const payForOrder = useOrderPayment();
   const [paying, setPaying] = useState(false);
 
@@ -61,13 +64,17 @@ export default function OrderDetailScreen() {
 
   const confirmCancelStore = (storeOrder: StoreOrder) => {
     const payment = order?.payment;
-    const paidByCard =
-      payment?.payment_method === 'card' && ['paid', 'ready_for_pickup'].includes(storeOrder.status) && payment.status === 'succeeded';
-    const money = paidByCard
-      ? `You'll get $${storeOrder.total.toFixed(2)} back on your card. Refunds usually show in 5–10 business days.`
-      : payment?.payment_method === 'cash_on_pickup'
-        ? "Nothing has been charged: you'd have paid in cash at pickup."
-        : "You haven't been charged for it.";
+    // What comes back is the server's sum (2026-11-20): everything except the
+    // service fee, or all of it when the farm didn't pack it within a day.
+    const refund = storeOrder.cancel_refund ?? 0;
+    const money =
+      refund > 0
+        ? `You'll get $${refund.toFixed(2)} back on your card${
+            storeOrder.cancel_keeps_service_fee ? `. The $${storeOrder.service_fee.toFixed(2)} service fee isn't refunded` : ''
+          }. Refunds usually show in 5–10 business days.`
+        : payment?.payment_method === 'cash_on_pickup'
+          ? "Nothing has been charged: you'd have paid in cash at pickup."
+          : "You haven't been charged for it.";
     Alert.alert(`Cancel your ${storeOrder.farm_name} order?`, money, [
       { text: 'Keep it', style: 'cancel' },
       { text: 'Cancel order', style: 'destructive', onPress: () => cancelStore(storeOrder.id) },
@@ -88,41 +95,56 @@ export default function OrderDetailScreen() {
     }
   };
 
-  // Marking a cash order received also records that the cash changed hands
-  // (it lands on the farmer's payout ledger), so confirm before doing it.
-  const confirmMarkReceived = (storeOrder: StoreOrder) => {
-    if (order?.payment?.payment_method !== 'cash_on_pickup') {
-      Alert.alert(
-        'Picked up your order?',
-        `Only confirm once you have your ${storeOrder.farm_name} order. It can't be cancelled after this.`,
-        [
-          { text: 'Not yet', style: 'cancel' },
-          { text: 'Yes, I have it', onPress: () => markReceived(storeOrder.id) },
-        ]
-      );
-      return;
-    }
-    Alert.alert(
-      'Picked up and paid?',
-      `Confirm you picked up your ${storeOrder.farm_name} order and paid $${storeOrder.total.toFixed(2)} in cash.`,
-      [
-        { text: 'Not yet', style: 'cancel' },
-        { text: 'Yes, received', onPress: () => markReceived(storeOrder.id) },
-      ]
-    );
+  // The farm hands the order over with the customer's code (2026-11-20), so
+  // there's no "Mark as received" any more. One extra hour, once.
+  const extendPickup = (storeOrder: StoreOrder) => {
+    Alert.alert('Add 1 hour?', "You can do this once. The farm will see you're coming a little later.", [
+      { text: 'Not now', style: 'cancel' },
+      {
+        text: 'Add 1 hour',
+        onPress: async () => {
+          if (!order) return;
+          setBusyStoreOrderId(storeOrder.id);
+          try {
+            const res = await apiClient.post<Order>(`/orders/${order.id}/store/${storeOrder.id}/extend-pickup`, {});
+            setOrder(res.data);
+          } catch (err) {
+            Alert.alert("Couldn't add the hour", apiErrorMessage(err, 'Please try again.'));
+          } finally {
+            setBusyStoreOrderId(null);
+          }
+        },
+      },
+    ]);
   };
 
-  const markReceived = async (storeOrderId: string) => {
+  // A cash order the app marked "not picked": did they collect it after all?
+  const answerCollected = async (storeOrder: StoreOrder, collected: boolean) => {
     if (!order) return;
-    setBusyStoreOrderId(storeOrderId);
+    setBusyStoreOrderId(storeOrder.id);
     try {
-      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${storeOrderId}/complete`, {});
+      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${storeOrder.id}/collected`, { collected });
       setOrder(res.data);
-    } catch (err: any) {
-      console.warn('Could not mark order received:', err);
-      Alert.alert('Could not update order', err?.response?.data?.detail ?? 'Please try again.');
+      if (collected) Alert.alert('Thanks for telling us', "We'll check with the farm. This won't count as a missed pickup.");
+    } catch (err) {
+      Alert.alert("Couldn't send that", apiErrorMessage(err, 'Please try again.'));
     } finally {
       setBusyStoreOrderId(null);
+    }
+  };
+
+  const sendReport = async (report: ProblemSubmission) => {
+    if (!order || !reporting) return;
+    setSendingReport(true);
+    try {
+      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${reporting.id}/problem`, report);
+      setOrder(res.data);
+      setReporting(null);
+      Alert.alert('Report sent', "Thanks for telling us. We'll get back to you within 2 business days.");
+    } catch (err) {
+      Alert.alert("Couldn't send your report", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setSendingReport(false);
     }
   };
 
@@ -183,9 +205,12 @@ export default function OrderDetailScreen() {
   };
 
   const confirmCancelWholeOrder = () => {
+    const refund = order ? order.store_orders.reduce((sum, so) => sum + (so.can_cancel ? so.cancel_refund ?? 0 : 0), 0) : 0;
     Alert.alert(
       'Cancel this whole order?',
-      'Every farm still in progress on this order will be cancelled, and anything already paid will be refunded.',
+      refund > 0
+        ? `Every farm on this order will be cancelled. You'll get $${refund.toFixed(2)} back on your card; service fees aren't refunded.`
+        : 'Every farm on this order will be cancelled. Nothing has been charged.',
       [
         { text: 'Keep it', style: 'cancel' },
         { text: 'Cancel everything', style: 'destructive', onPress: cancelWholeOrder },
@@ -225,10 +250,13 @@ export default function OrderDetailScreen() {
 
   const unfinished = Boolean(order.checkout_unfinished);
   const processing = order.payment?.status === 'processing';
+  // The whole order can go only when every farm still open can be cancelled.
+  const openStores = order.store_orders.filter((so) => !['completed', 'not_picked', 'cancelled'].includes(so.status));
   const hasCancellableStore =
     !unfinished &&
     !processing &&
-    order.store_orders.some((so) => so.status === 'pending_payment' || so.status === 'paid' || so.status === 'ready_for_pickup');
+    openStores.length > 1 &&
+    openStores.every((so) => so.can_cancel ?? (so.status === 'pending_payment' || so.status === 'paid'));
 
   return (
     <View style={styles.container}>
@@ -290,14 +318,16 @@ export default function OrderDetailScreen() {
             checkoutUnfinished={unfinished}
             busy={busyStoreOrderId === storeOrder.id}
             onCancel={() => confirmCancelStore(storeOrder)}
-            onMarkReceived={() => confirmMarkReceived(storeOrder)}
+            onExtendPickup={() => extendPickup(storeOrder)}
+            onReportProblem={() => setReporting(storeOrder)}
+            onAnswerCollected={(collected) => answerCollected(storeOrder, collected)}
             onRate={(rating, comment) => rateStore(storeOrder.id, rating, comment)}
             ratingBusy={ratingStoreOrderId === storeOrder.id}
             onDeliveryUpdate={loadOrder}
           />
         )}
         ListFooterComponent={
-          hasCancellableStore && order.store_orders.length > 1 ? (
+          hasCancellableStore ? (
             <Pressable style={styles.cancelWholeButton} onPress={confirmCancelWholeOrder} disabled={cancellingOrder}>
               {cancellingOrder ? (
                 <ActivityIndicator size="small" color={colors.danger} />
@@ -308,6 +338,7 @@ export default function OrderDetailScreen() {
           ) : null
         }
       />
+      <ReportProblemSheet storeOrder={reporting} submitting={sendingReport} onClose={() => setReporting(null)} onSubmit={sendReport} />
     </View>
   );
 }

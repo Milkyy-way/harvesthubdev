@@ -137,8 +137,10 @@ export default function FarmerEarningsScreen() {
             <Bullet text="Your sales are grouped into weeks that run Saturday to Friday." />
             <Bullet text="Each week's payout is prepared the following Friday and sent to you by bank transfer — that week in between leaves room for cancellations and refunds." />
             <Bullet text={`HarvestHub keeps a ${commissionPct}% commission on your sales, after any promo discounts you offer.`} />
-            <Bullet text="Cash orders: you keep the cash at pickup, so HarvestHub's share (commission, service fee, and tax) comes off your payout. If that makes a week negative, it's carried to your next payout." />
-            <Bullet text="If you cancel an order a customer already paid for, they're refunded in full and the service fee comes off your payout." />
+            <Bullet text="Cash orders: you keep the cash at pickup, so HarvestHub's share (commission and tax) comes off your payout. If that makes a week negative, it's carried to your next payout." />
+            <Bullet text="If you cancel an order a customer already paid for, they're refunded in full and the service fee comes off your payout. On a Harvest Pass order, which has no service fee, it's the 5% the fee would have been." />
+            <Bullet text="If a card order isn't picked up in time, you're still paid for it, and its items go back on your products." />
+            <Bullet text="If a customer reports a problem and we refund them, your share of the refunded items comes off your payout. HarvestHub gives back its commission on them." />
           </View>
         </ScrollView>
       )}

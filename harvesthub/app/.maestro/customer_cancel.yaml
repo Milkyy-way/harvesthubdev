@@ -1,5 +1,5 @@
-# A customer cancels a paid order (placed by run_ui.py) and sees it refunded.
-# Pass EMAIL, PASSWORD and FARM.
+# A customer cancels a paid order (placed by run_ui.py) and sees it refunded,
+# less the service fee (2026-11-20). Pass EMAIL, PASSWORD and FARM.
 appId: com.harvesthubmarket.app
 ---
 - runFlow:
@@ -15,13 +15,13 @@ appId: com.harvesthubmarket.app
 - tapOn: "Cancel"
 # Says what happens to the money (item 20).
 - assertVisible: "Cancel your .* order\\?"
-- assertVisible: "You.ll get \\$.* back on your card.*"
+- assertVisible: "You.ll get \\$.* back on your card\\. The \\$.* service fee isn.t refunded.*"
 - tapOn: "CANCEL ORDER"
 - extendedWaitUntil:
     visible: "Refunded"
     timeout: 30000
 - assertVisible: "Cancelled"
 # The top says it was refunded, and when it shows (item 21).
-- assertVisible: "Refunded \\$.* to your card"
+- assertVisible: "Paid by card · \\$.* refunded"
 - assertVisible: "Refunds usually show on your card.*"
 - takeScreenshot: customer_cancel_done

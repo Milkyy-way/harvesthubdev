@@ -69,6 +69,19 @@ export interface FarmerOrder {
   refunded_amount: number;
   cancelled_by: 'customer' | 'farmer' | 'admin' | null;
   cancellation_reason: string | null;
+  // Pickup (2026-11-20). The farm never sees the code: the customer tells it.
+  pickup_starts_at?: string | null;
+  pickup_ends_at?: string | null;
+  pickup_extended?: boolean;
+  completed_at?: string | null;
+  not_picked_at?: string | null;
+  // Can enter the customer's code now: while it waits, and for a day after
+  // "not picked" (until hand_over_until).
+  can_hand_over?: boolean;
+  hand_over_until?: string | null;
+  picked_up_with?: 'code' | 'backup' | null;
+  cancel_fee?: number; // what cancelling now costs the farm
+  customer_has_phone?: boolean; // the backup check needs a phone on file
 }
 
 export interface FarmerOrdersResponse {

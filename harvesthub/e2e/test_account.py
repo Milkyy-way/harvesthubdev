@@ -19,7 +19,7 @@ import requests
 
 import hh
 from seed import FARMS, customer_email
-from shop import fill_cart, products
+from shop import fill_cart, hand_over, products
 
 r = hh.Report("account")
 farm_a, farm_c = hh.User(FARMS[0]["email"]), hh.User(FARMS[2]["email"])
@@ -81,7 +81,7 @@ oid, so = place_order(c7, farm_c, [("ZZ Honey", 1)])
 expect_refused("an order not yet picked up can't be rated",
                lambda: c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 5}), 409, "completed")
 farm_c.post(f"/farmers/me/orders/{so}/ready")
-c7.post(f"/orders/{oid}/store/{so}/complete")
+hand_over(farm_c, c7, oid, so)
 c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 3, "comment": "Autotest: fine"})
 c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 5, "comment": "Autotest: great honey"})
 rows = hh.q("select rating, comment from farmer_ratings where store_order_id = %(s)s", s=so)
@@ -106,7 +106,7 @@ check = leaver.get("/account/deletion-check")
 r.check("with an order in progress, deleting is blocked with a clear reason", not check["can_delete"] and "in progress" in " ".join(check["blockers"]), check)
 expect_refused("and the delete itself is refused", lambda: leaver.call("DELETE", "/account"), 409)
 farm_a.post(f"/farmers/me/orders/{so}/ready")
-leaver.post(f"/orders/{oid}/store/{so}/complete")
+hand_over(farm_a, leaver, oid, so)
 r.check("once it's picked up, deleting is allowed", leaver.get("/account/deletion-check")["can_delete"])
 uid = leaver.id
 leaver.call("DELETE", "/account")

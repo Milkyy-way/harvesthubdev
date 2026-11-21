@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 import stripe
 
 from app.orders.models import Order, StoreOrder, StoreOrderItem, OrderCancellation
-from app.payments.models import AWAITING_CUTOFF, POD_PLACED_STATUSES, Payment, Refund, PaymentCancellation
+from app.payments.models import AWAITING_CUTOFF, Payment, Refund, PaymentCancellation
 from app.payments import stripe_client
 from app.products.models import Product
 from app.categories.models import Category
@@ -29,6 +29,8 @@ from app.customers.models import CustomerProfile
 from app.membership import service as membership_service
 from app.pods.models import Pod
 from app.core.localtime import LOCAL_TZ, to_local
+from app.pickup import rules as pickup_rules
+from app.problems.models import ProblemReport
 
 logger = logging.getLogger(__name__)
 
@@ -41,21 +43,24 @@ _TERMINAL_PAYMENT_STATUSES = ("succeeded", "canceled", "failed")
 # confirming it, so that order is placed.
 _UNPAID_INTENT_STATUSES = ("requires_payment_method", "requires_confirmation", "requires_action")
 # How long an unfinished checkout waits to be paid before it's removed
-# (expire_unfinished_checkouts, every 15 minutes).
-CHECKOUT_HOLD = timedelta(hours=1)
+# (expire_unfinished_checkouts, on the scheduled job). Its stock is held
+# meanwhile (0042), so this was cut from an hour (2026-11-20).
+CHECKOUT_HOLD = timedelta(minutes=30)
 _PAYMENT_PROCESSING = "Your payment is still going through. You can cancel once it's confirmed, usually within a few minutes."
 _PROVIDER_UNREACHABLE = "We couldn't reach our payment provider. Please try again."
-# Store order lifecycle (see 0025, 0032):
-#   card pickup:   pending_payment -> paid -> ready_for_pickup -> completed
-#   cash pickup:   pending_payment ---------> ready_for_pickup -> completed
+# Store order lifecycle (see 0025, 0032, 0042):
+#   card pickup:   pending_payment -> paid -> ready_for_pickup -> completed | not_picked
+#   cash pickup:   pending_payment ---------> ready_for_pickup -> completed | not_picked
 #   card delivery: pending_payment -> paid -> out_for_delivery -> completed
-# (delivery is card only; the farmer's run moves it along — app/delivery/)
-# What a customer can cancel. Not 'completed' (2026-11-07): Cancel Whole Order
-# used to refund farms already picked up, and the API allowed refunding any
-# finished order with no time limit. A refund after pickup is for HarvestHub to
-# make by hand; the ledger's refund-after-payout branch
-# (app/payouts/service.py) is kept for that.
-_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid", "ready_for_pickup")
+# (delivery is card only; the farmer's run moves it along — app/delivery/.
+# A pickup is handed over with the customer's code — app/pickup/.)
+# What a customer can cancel (2026-11-20): nothing the farm has packed
+# (ready_for_pickup), and a delivery only until the farm's cutoff — see
+# cancel_terms. Anything wrong after the handover is "Report a problem"
+# (app/problems/), which HarvestHub decides.
+_CANCELLABLE_STORE_ORDER_STATUSES = ("pending_payment", "paid")
+# Nothing more happens to these.
+_FINISHED_STORE_ORDER_STATUSES = ("completed", "not_picked", "cancelled")
 # Statuses whose cancellation needs a refund (a no-op for cash, which never
 # captured money online) + a farmer ledger adjustment, and whose stock has
 # definitely been taken — as opposed to 'pending_payment'.
@@ -69,6 +74,15 @@ _ON_ITS_WAY = "This order is already on its way, so it can't be cancelled now."
 _POD_ORDERS_CLOSED = "Orders for this delivery have closed, so it can't be cancelled now."
 _ALREADY_RECEIVED = "You've already received this order, so it can't be cancelled. If something was wrong with it, please contact support."
 _DEAL_ORDER_LOCKED = "A group deal order can't be cancelled once the deal has closed. If the farm can't fill it, you'll be refunded in full."
+_PACKED = (
+    "The farm has already packed this order, so it can't be cancelled now. "
+    "If something's wrong when you pick it up, you can report a problem."
+)
+_DELIVERY_CLOSED = "Orders for this delivery have closed and the farm is getting it ready, so it can't be cancelled now."
+_NOT_PICKED = "The pickup time for this order has ended, so it can't be cancelled."
+# A customer cancelling a pickup the farm hadn't packed within a day
+# (pickup_rules.NOT_READY_LIMIT): it counts as the farm's cancellation.
+FARM_NOT_READY_REASON = "The farm didn't have it ready within 24 hours"
 # A Neighborhood Pod order saves a card, and is charged at the farm's cutoff
 # (app/pods/charging.py).
 POD_ORDER_PURPOSE = "pod_order"
@@ -137,6 +151,12 @@ def build_order_out(db: Session, order_id) -> dict:
     # Not paid for yet: the farm's street address is only shared once the
     # order is placed (2026-11-14), like the farm only sees the customer then.
     unfinished = checkout_unfinished(order, store_orders, payment)
+    now = datetime.now(timezone.utc)
+    reports = (
+        {r.store_order_id: r for r in db.query(ProblemReport).filter(ProblemReport.store_order_id.in_([so.id for so in store_orders]))}
+        if store_orders
+        else {}
+    )
 
     # Live-joined, not a snapshot — unlike price/address (frozen for
     # historical accuracy), a farm's photo has no legal/financial reason to
@@ -186,6 +206,8 @@ def build_order_out(db: Session, order_id) -> dict:
                 "delivery_fee": float(so.delivery_fee),
                 "service_fee": float(so.service_fee),
                 "member_savings": float(so.member_savings or 0),
+                "fixed_fee": float(so.fixed_fee or 0),
+                "cash_discount": float(so.cash_discount or 0),
                 "tax": float(so.tax),
                 "total": float(so.total),
                 "refunded_amount": float(refunded or 0),
@@ -194,8 +216,10 @@ def build_order_out(db: Session, order_id) -> dict:
                 "cancelled_by": cancelled_by if so.status == "cancelled" else None,
                 "cancellation_reason": cancellation_reason if so.status == "cancelled" else None,
                 "delivery": delivery_service.progress_for(db, so),
+                **_customer_actions(db, so, payment, store_orders, reports.get(so.id), now),
                 "items": [
                     {
+                        "id": str(i.id),
                         "product_id": str(i.product_id) if i.product_id else None,
                         "product_name": i.product_name,
                         "unit": i.unit,
@@ -246,26 +270,39 @@ def list_orders(db: Session, customer_id: str, status_filter: str | None, range_
     return [build_order_out(db, o.id) for o in orders]
 
 
-def _validate_stock(db: Session, groups: list[dict]) -> None:
-    for group in groups:
-        for item in group["items"]:
-            product = db.query(Product).filter(Product.id == item["product_id"]).first()
-            if product and item["quantity"] > product.quantity_available:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Only {product.quantity_available} of {item['name']} left — please update your cart",
-                )
+def _take_stock(db: Session, store_order: StoreOrder, items: list[dict]) -> None:
+    """Takes this farm's items off its products the moment checkout opens
+    (2026-11-20), so two people can't buy the last one: each is a single
+    UPDATE that only succeeds while enough is left. Given back if the
+    checkout isn't paid (CHECKOUT_HOLD) or the order is cancelled. Raises
+    409, rolling everything back, when something has run out."""
+    for item in items:
+        if not item.get("product_id"):
+            continue
+        taken = (
+            db.query(Product)
+            .filter(Product.id == item["product_id"], Product.quantity_available >= item["quantity"])
+            .update({Product.quantity_available: Product.quantity_available - item["quantity"]}, synchronize_session=False)
+        )
+        if not taken:
+            left = db.query(Product.quantity_available).filter(Product.id == item["product_id"]).scalar() or 0
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Only {left} of {item['name']} left — please update your cart",
+            )
+    store_order.stock_held = True
 
 
 def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) -> None:
-    """The point of no return for one order: decrement real stock, count its
-    promo codes as used, and drop the ordered items from the customer's
-    active cart. Deliberately NOT
-    called at order-creation time for card payments — only once payment is
-    actually confirmed (see _finalize_successful_payment) — so a declined
-    or abandoned payment never locks stock or empties a cart for nothing.
-    cash_on_pickup has no such failure mode, so it calls this immediately
-    at creation instead.
+    """The point of no return for one order: count its promo codes as used,
+    and drop the ordered items from the customer's active cart. Deliberately
+    NOT called at order-creation time for card payments — only once payment
+    is actually confirmed (see _finalize_successful_payment) — so a declined
+    or abandoned payment never empties a cart for nothing. cash_on_pickup
+    has no such failure mode, so it calls this immediately at creation.
+    The stock was already taken when checkout opened (_take_stock, 0042);
+    an order from before that takes it here.
 
     Only touches store orders still in 'pending_payment' — a farm cancelled
     out of a still-unpaid multi-farm order must keep its stock and its cart
@@ -283,12 +320,14 @@ def _commit_inventory_and_clear_cart(db: Session, customer_id: str, order_id) ->
         items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id).all()
         for item in items:
             if item.product_id:
-                product = db.query(Product).filter(Product.id == item.product_id).first()
-                if product:
-                    product.quantity_available = max(0, product.quantity_available - item.quantity)
+                if not so.stock_held:
+                    product = db.query(Product).filter(Product.id == item.product_id).first()
+                    if product:
+                        product.quantity_available = max(0, product.quantity_available - item.quantity)
                 db.query(CartItem).filter(
                     CartItem.customer_id == customer_id, CartItem.product_id == item.product_id
                 ).delete()
+        so.stock_held = True
 
 
 # --- Notifications (app/notifications/) — always sent after the commit ------------
@@ -358,6 +397,10 @@ def _notify_farms_of_customer_cancellation(db: Session, store_orders: list[Store
 
 def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[dict, str | None]:
     customer_id = str(customer.id)
+    if request.payment_method == "cash_on_pickup":
+        blocked = pickup_rules.cash_blocked_reason(db, customer.id)
+        if blocked:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=blocked)
 
     preview_groups = [
         CheckoutGroupRequest(
@@ -369,11 +412,9 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
         )
         for g in request.groups
     ]
-    preview = build_checkout_preview(db, customer_id, preview_groups)
+    preview = build_checkout_preview(db, customer_id, preview_groups, request.payment_method)
     if not preview["groups"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing in your cart for the selected farms")
-
-    _validate_stock(db, preview["groups"])
 
     deliveries = [g for g in preview["groups"] if g["fulfillment_method"] == "delivery"]
     if deliveries and request.payment_method != "card":
@@ -433,6 +474,8 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
             promo_discount=group["promo_discount"],
             delivery_fee=group["delivery_fee"],
             service_fee=group["service_fee"],
+            fixed_fee=group["fixed_fee"],
+            cash_discount=group["cash_discount"],
             member_savings=group["member_savings"],
             tax=group["tax"],
             total=group["farm_total"],
@@ -455,6 +498,7 @@ def create_order(db: Session, customer, request: CreateOrderRequest) -> tuple[di
                     keep_cold=item["keep_cold"],
                 )
             )
+        _take_stock(db, store_order, group["items"])
 
     grand_total = preview["grand_total"]
     payment = Payment(
@@ -668,6 +712,7 @@ def _abandon(db: Session, order: Order, payment: Payment, store_orders: list) ->
     db.add(PaymentCancellation(id=uuid.uuid4(), payment_id=payment.id, reason="Checkout not finished"))
     for so in store_orders:
         if so.status == "pending_payment":
+            _restore_stock(db, so)
             so.status = "cancelled"
     order.abandoned_at = datetime.now(timezone.utc)
     db.commit()
@@ -707,7 +752,8 @@ def _still_available(db: Session, store_orders: list) -> None:
                 )
         for item in db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id):
             product = db.get(Product, item.product_id) if item.product_id else None
-            if product is None or not product.is_active or product.quantity_available < item.quantity:
+            # Its stock is still held for it (0042); an older one checks what's left.
+            if product is None or not product.is_active or (not so.stock_held and product.quantity_available < item.quantity):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"{item.product_name} from {so.farm_name} isn't available in that amount any more. Remove this one and check out again.",
@@ -811,28 +857,183 @@ def _record_cancellation(order_id, store_order_id, cancelled_by, cancelled_by_ro
 
 
 def _stock_was_taken(payment: Payment | None, store_order: StoreOrder) -> bool:
-    """Whether _commit_inventory_and_clear_cart already ran for this store
-    order — card orders take stock once paid, cash orders the moment they're
-    placed. Must be checked BEFORE the store order's status changes."""
-    if store_order.status in _REFUNDABLE_STORE_ORDER_STATUSES:
-        return True
-    return (
-        store_order.status == "pending_payment"
-        and payment is not None
-        and (payment.payment_method == "cash_on_pickup" or payment.status in POD_PLACED_STATUSES)
-    )
+    """Whether this store order's stock is off the products — from checkout
+    on (0042), until it's given back."""
+    return bool(store_order.stock_held)
 
 
-def _restore_stock_and_promo(db: Session, store_order: StoreOrder) -> None:
-    """Undoes _commit_inventory_and_clear_cart for one cancelled store order:
-    the stock goes back and the promo code gets its use back."""
-    promotions_service.release_promo_use(db, store_order.farmer_id, store_order.promo_code, store_order.order_id)
+def _restore_stock(db: Session, store_order: StoreOrder) -> None:
+    """Puts this store order's stock back on its products, once."""
+    if not store_order.stock_held:
+        return
     items = db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == store_order.id).all()
     for item in items:
         if item.product_id:
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if product:
                 product.quantity_available += item.quantity if item.stock_units is None else item.stock_units
+    store_order.stock_held = False
+
+
+def _restore_stock_and_promo(db: Session, store_order: StoreOrder) -> None:
+    """Undoes the order for one cancelled store order: the stock goes back
+    and the promo code gets its use back."""
+    promotions_service.release_promo_use(db, store_order.farmer_id, store_order.promo_code, store_order.order_id)
+    _restore_stock(db, store_order)
+
+
+def _as_aware(value):
+    return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _iso(value) -> str | None:
+    return _as_aware(value).isoformat() if value else None
+
+
+def _farm_late(store_order: StoreOrder, now: datetime) -> bool:
+    """A pickup the farm hasn't packed within a day of getting it."""
+    return (
+        store_order.fulfillment_method == "pickup"
+        and store_order.status in ("paid", "pending_payment")
+        and store_order.released_to_farmer_at is not None
+        and not store_order.group_deal_id
+        and now >= _as_aware(store_order.released_to_farmer_at) + pickup_rules.NOT_READY_LIMIT
+    )
+
+
+def _delivery_closed(db: Session, store_order: StoreOrder, now: datetime) -> bool:
+    """A paid home delivery after the farm's cutoff for its window: the farm
+    is getting it ready (decided 2026-11-20). Pod orders: _pod_orders_closed."""
+    if store_order.fulfillment_method != "delivery" or store_order.pod_full_fee is not None:
+        return False
+    if store_order.status != "paid" or store_order.delivery_window_starts_at is None:
+        return False
+    s = db.get(FarmDeliverySettings, store_order.farmer_id)
+    return now >= _as_aware(store_order.delivery_window_starts_at) - timedelta(hours=s.cutoff_hours if s else 0)
+
+
+def farm_cancel_amounts(db: Session, store_order: StoreOrder, siblings: list | None = None) -> tuple[float, float]:
+    """(back to the customer, charged to the farm) when a paid farm's part is
+    cancelled through no fault of the customer: the farm cancelled it, or
+    didn't pack it within a day. The customer gets the whole part back and
+    the farm pays its service fee — on a Harvest Pass order, the 5% the fee
+    would have been (2026-11-20). The 30¢ belongs to the payment: it stays
+    while other farms' parts of it go ahead, and when this is the last part
+    it comes back, with any 30¢ kept from an earlier farm's cancel, paid by
+    this farm. Work it out BEFORE the store order's status changes."""
+    siblings = siblings if siblings is not None else _store_orders_of(db, store_order.order_id)
+    others = [s for s in siblings if s.id != store_order.id]
+    total, fixed = float(store_order.total), float(store_order.fixed_fee or 0)
+    charge = float(store_order.service_fee) + float(store_order.member_savings or 0)
+    if any(s.status != "cancelled" for s in others):
+        return round(total - fixed, 2), round(charge - fixed, 2)
+    with_fixed = [s for s in others if float(s.fixed_fee or 0) > 0]
+    cancellations = cancellations_for(db, [s.id for s in with_fixed])
+    kept = sum(
+        float(s.fixed_fee)
+        for s in with_fixed
+        if s.id in cancellations and (cancellations[s.id][0] == "farmer" or cancellations[s.id][1] == FARM_NOT_READY_REASON)
+    )
+    return round(total + kept, 2), round(charge + kept, 2)
+
+
+def cancel_terms(db: Session, store_order: StoreOrder, payment: Payment | None, siblings: list, now: datetime) -> dict:
+    """Whether the customer can cancel this farm's part now, and what they'd
+    get back (decided 2026-11-20):
+      * not once the farm has packed it, a delivery after the farm's cutoff, a
+        pod order after the cutoff, a group deal order, or while a payment is
+        still going through;
+      * a paid part: everything back except the service fee;
+      * a pickup the farm hasn't packed within a day: everything back, and it
+        counts as the farm's cancellation (farm_late)."""
+
+    def no(reason: str | None) -> dict:
+        return {"can": False, "reason": reason, "refund": 0.0, "keeps_fee": False, "farm_late": False}
+
+    if store_order.status == "cancelled":
+        return no(None)
+    if store_order.status == "completed":
+        return no(_ALREADY_RECEIVED)
+    if store_order.status == "not_picked":
+        return no(_NOT_PICKED)
+    if store_order.status == "ready_for_pickup":
+        return no(_PACKED)
+    if store_order.status == "out_for_delivery":
+        return no(_ON_ITS_WAY)
+    if store_order.group_deal_id:
+        return no(_DEAL_ORDER_LOCKED)
+    if payment is not None and payment.status == "processing":
+        return no(_PAYMENT_PROCESSING)
+    if _pod_orders_closed(db, store_order, payment):
+        return no(_POD_ORDERS_CLOSED)
+    if _delivery_closed(db, store_order, now):
+        return no(_DELIVERY_CLOSED)
+    late = _farm_late(store_order, now)
+    if store_order.status != "paid" or _is_cash(payment):
+        # Nothing paid yet: an unpaid card checkout, a cash order, a pod order before its charge.
+        return {"can": True, "reason": None, "refund": 0.0, "keeps_fee": False, "farm_late": late}
+    if late:
+        refund, _ = farm_cancel_amounts(db, store_order, siblings)
+        return {"can": True, "reason": None, "refund": refund, "keeps_fee": False, "farm_late": True}
+    fee = float(store_order.service_fee)
+    return {"can": True, "reason": None, "refund": round(float(store_order.total) - fee, 2), "keeps_fee": fee > 0, "farm_late": False}
+
+
+def _customer_actions(db: Session, so: StoreOrder, payment: Payment | None, siblings: list, report, now: datetime) -> dict:
+    """What the customer can do with this farm's part now — for the app."""
+    terms = cancel_terms(db, so, payment, siblings, now)
+    pickup = None
+    if so.fulfillment_method == "pickup":
+        late_until = _as_aware(so.not_picked_at) + pickup_rules.LATE_CONFIRM if so.not_picked_at else None
+        show_code = so.status == "ready_for_pickup" or (so.status == "not_picked" and late_until is not None and now < late_until)
+        pickup = {
+            "ready_at": _iso(so.ready_at),
+            "starts_at": _iso(so.pickup_starts_at),
+            "ends_at": _iso(so.pickup_ends_at),
+            "extended": so.pickup_extended_at is not None,
+            "can_extend": so.status == "ready_for_pickup"
+            and so.pickup_extended_at is None
+            and so.pickup_ends_at is not None
+            and now < _as_aware(so.pickup_ends_at),
+            "code": so.pickup_code if show_code else None,
+            "picked_up_at": _iso(so.completed_at) if so.status == "completed" else None,
+            "not_picked_at": _iso(so.not_picked_at),
+            # Not packed by then: the customer can cancel with everything back.
+            "free_cancel_from": (
+                _iso(_as_aware(so.released_to_farmer_at) + pickup_rules.NOT_READY_LIMIT)
+                if so.status in ("paid", "pending_payment") and so.released_to_farmer_at and not so.group_deal_id
+                else None
+            ),
+        }
+    finished_at = so.completed_at if so.status == "completed" else so.not_picked_at if so.status == "not_picked" else None
+    report_until = _as_aware(finished_at) + pickup_rules.REPORT_WINDOW if finished_at else None
+    return {
+        "can_cancel": terms["can"],
+        "cancel_blocked_reason": terms["reason"],
+        "cancel_refund": terms["refund"],
+        "cancel_keeps_service_fee": terms["keeps_fee"],
+        "pickup": pickup,
+        "completed_at": _iso(so.completed_at),
+        "problem": (
+            {
+                "status": report.status,
+                "reason": report.reason,
+                "created_at": _iso(report.created_at),
+                "refund_amount": float(report.refund_amount) if report.refund_amount is not None else None,
+                "note": report.decision_note,
+            }
+            if report
+            else None
+        ),
+        "can_report_problem": report is None and report_until is not None and now < report_until,
+        "report_until": report_until.isoformat() if report_until else None,
+        # A cash order not picked up: "Did you collect it?" (the farm may have skipped the code).
+        "ask_collected": so.status == "not_picked"
+        and _is_cash(payment)
+        and so.collected_answer is None
+        and so.not_picked_at is not None
+        and now < _as_aware(so.not_picked_at) + timedelta(days=7),
+    }
 
 
 def _sync_cash_payment_status(db: Session, order_id, payment: Payment | None) -> None:
@@ -869,12 +1070,26 @@ def _pod_orders_closed(db: Session, store_order: StoreOrder, payment: Payment | 
     return payment.status != AWAITING_CUTOFF or datetime.now(timezone.utc) >= cutoff
 
 
-def _refund_store_order(db: Session, payment: Payment, store_order: StoreOrder, reason: str | None) -> None:
+def _refund_store_order(
+    db: Session, payment: Payment, store_order: StoreOrder, reason: str | None, amount: float | None = None
+) -> float:
+    """Refunds `amount` of this farm's part to the card (default: all of it),
+    at most once — the idempotency key makes a repeat return the same refund.
+    Returns what went back (0 for cash, which never captured money online)."""
     if payment.payment_method == "cash_on_pickup":
-        return  # nothing was ever electronically captured — just a status change, no refund object
+        return 0.0
+    amount = round(float(store_order.total) if amount is None else amount, 2)
+    if amount <= 0:
+        return 0.0
 
     try:
-        stripe_refund = stripe_client.create_refund(payment.stripe_payment_intent_id, float(store_order.total), reason=reason)
+        stripe_refund = stripe_client.create_refund(
+            payment.stripe_payment_intent_id,
+            amount,
+            reason=reason,
+            idempotency_key=f"refund-cancel-{store_order.id}",
+            store_order_id=str(store_order.id),
+        )
     except stripe.error.StripeError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -885,12 +1100,14 @@ def _refund_store_order(db: Session, payment: Payment, store_order: StoreOrder, 
             id=uuid.uuid4(),
             payment_id=payment.id,
             store_order_id=store_order.id,
-            amount=store_order.total,
+            amount=amount,
             reason=reason,
             stripe_refund_id=stripe_refund.id,
             status="succeeded" if stripe_refund.status == "succeeded" else "pending",
+            source="cancel",
         )
     )
+    return amount
 
 
 # How Stripe's refund statuses end up in ours (0013 allows pending, succeeded, failed).
@@ -949,42 +1166,65 @@ def cancel_store_order(
     ):
         return build_order_out(db, order.id)
     db.refresh(store_order)
-    if _pod_orders_closed(db, store_order, _payment_of(db, order.id)):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
-    if store_order.group_deal_id and store_order.status != "cancelled":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
-    if store_order.status == "completed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ALREADY_RECEIVED)
-    if store_order.status not in _CANCELLABLE_STORE_ORDER_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot cancel a store order with status '{store_order.status}'",
-        )
+    payment = _payment_of(db, order.id)
+    if store_order.status == "cancelled":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This part of the order is already cancelled.")
+    terms = cancel_terms(db, store_order, payment, _store_orders_of(db, order.id), datetime.now(timezone.utc))
+    if not terms["can"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=terms["reason"] or "This order can't be cancelled now.")
 
-    _cancel_one_store_order(db, order, store_order, cancelled_by, cancelled_by_role, reason)
+    farm_fee = 0.0
+    if terms["farm_late"]:
+        reason = FARM_NOT_READY_REASON
+        if store_order.status in _REFUNDABLE_STORE_ORDER_STATUSES and not _is_cash(payment):
+            farm_fee = farm_cancel_amounts(db, store_order)[1]
+    refunded = _cancel_one_store_order(
+        db, order, store_order, cancelled_by, cancelled_by_role, reason, refund_amount=terms["refund"]
+    )
+    if refunded and farm_fee > 0:
+        payouts_service.create_cancellation_fee_entry(db, store_order, farm_fee)
     delivery_service.release_stop(db, store_order)
     db.commit()
-    _notify_farms_of_customer_cancellation(db, [store_order])
+    if terms["farm_late"]:
+        _notify_farm_not_ready(db, store_order, farm_fee if refunded else 0.0)
+    else:
+        _notify_farms_of_customer_cancellation(db, [store_order])
     return build_order_out(db, order.id)
 
 
+def _notify_farm_not_ready(db: Session, store_order: StoreOrder, fee: float) -> None:
+    if store_order.released_to_farmer_at is None:
+        return
+    notify(
+        db,
+        store_order.farmer_id,
+        "order_cancelled_not_ready",
+        {"item_count": _item_count(db, store_order.id), "total": float(store_order.subtotal), "fee": fee},
+        dedupe_key=f"order_cancelled:{store_order.id}",
+    )
+
+
 def _cancel_one_store_order(
-    db: Session, order: Order, store_order: StoreOrder, cancelled_by, cancelled_by_role: str, reason: str | None
-) -> bool:
+    db: Session,
+    order: Order,
+    store_order: StoreOrder,
+    cancelled_by,
+    cancelled_by_role: str,
+    reason: str | None,
+    refund_amount: float | None = None,
+) -> float:
     """Cancels one farm's part of an order — shared by the customer's and the
-    farmer's cancel actions. Refunds whatever was paid (full store order
-    total), restores stock that was taken, adjusts the farmer ledger, and
-    records who cancelled. Does NOT commit. Returns True if real money was
-    refunded to a card (the case where a farmer cancellation costs the
-    farmer the service fee)."""
+    farmer's cancel actions. Refunds refund_amount of what was paid (default:
+    the whole part; the callers work it out — cancel_terms, farm_cancel_amounts),
+    restores stock that was taken, adjusts the farmer ledger, and records who
+    cancelled. Does NOT commit. Returns what was refunded to a card."""
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
     stock_taken = _stock_was_taken(payment, store_order)
-    refunded_to_card = False
+    refunded = 0.0
 
     if store_order.status in _REFUNDABLE_STORE_ORDER_STATUSES:
-        _refund_store_order(db, payment, store_order, reason)
+        refunded = _refund_store_order(db, payment, store_order, reason, refund_amount)
         payouts_service.handle_refund_ledger_adjustment(db, store_order)
-        refunded_to_card = payment is not None and payment.payment_method == "card"
     elif payment and payment.stripe_setup_intent_id and not payment.stripe_payment_intent_id:
         # A pod order before its charge: no money has moved, so nothing to refund.
         payment.status = "canceled"
@@ -1019,25 +1259,16 @@ def _cancel_one_store_order(
     store_order.status = "cancelled"
     db.add(_record_cancellation(order.id, store_order.id, cancelled_by, cancelled_by_role, reason))
     _sync_cash_payment_status(db, order.id, payment)
-    return refunded_to_card
+    return refunded
 
 
 def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_by_role: str, cancelled_by, reason: str | None) -> dict:
+    """Every farm's part that's still open — only if each one can be
+    cancelled now (cancel_terms); otherwise nothing is, and the customer is
+    told which farm's part is locked."""
     order = get_owned_order(db, customer_id, order_id)
-    store_orders = (
-        db.query(StoreOrder)
-        .filter(StoreOrder.order_id == order.id, StoreOrder.status.in_(_CANCELLABLE_STORE_ORDER_STATUSES))
-        .all()
-    )
-    if not store_orders:
-        on_its_way = (
-            db.query(StoreOrder.id)
-            .filter(StoreOrder.order_id == order.id, StoreOrder.status == "out_for_delivery")
-            .first()
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=_ON_ITS_WAY if on_its_way else "Nothing left to cancel on this order"
-        )
+    if not [so for so in _store_orders_of(db, order.id) if so.status not in _FINISHED_STORE_ORDER_STATUSES]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Nothing left to cancel on this order")
 
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
     _block_while_processing(db, order, payment)
@@ -1045,26 +1276,40 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
     # (older app builds cancel these).
     if checkout_unfinished(order, _store_orders_of(db, order.id), payment) and _abandon(db, order, payment, _store_orders_of(db, order.id)):
         return build_order_out(db, order.id)
-    store_orders = (
-        db.query(StoreOrder)
-        .filter(StoreOrder.order_id == order.id, StoreOrder.status.in_(_CANCELLABLE_STORE_ORDER_STATUSES))
-        .all()
-    )
-    if any(_pod_orders_closed(db, so, payment) for so in store_orders):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_POD_ORDERS_CLOSED)
-    if any(so.group_deal_id for so in store_orders):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DEAL_ORDER_LOCKED)
-    refundable = [so for so in store_orders if so.status in _REFUNDABLE_STORE_ORDER_STATUSES]
+    now = datetime.now(timezone.utc)
+    siblings = _store_orders_of(db, order.id)
+    store_orders = [so for so in siblings if so.status not in _FINISHED_STORE_ORDER_STATUSES]
+    late = {}
+    for so in store_orders:
+        terms = cancel_terms(db, so, payment, siblings, now)
+        if not terms["can"]:
+            detail = terms["reason"] or "This order can't be cancelled now."
+            if len(store_orders) > 1:
+                detail = f"{so.farm_name}: {detail} You can still cancel the other farms one at a time."
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        late[so.id] = terms["farm_late"]
+    # The farm's-fault parts last, so a 30¢ kept on the way comes back with them.
+    refundable = sorted((so for so in store_orders if so.status in _REFUNDABLE_STORE_ORDER_STATUSES), key=lambda so: late[so.id])
     pending = [so for so in store_orders if so.status == "pending_payment"]
+    late_fees: dict = {}
 
     for so in refundable:
-        _refund_store_order(db, payment, so, reason)
+        terms = cancel_terms(db, so, payment, _store_orders_of(db, order.id), now)
+        so_reason = FARM_NOT_READY_REASON if terms["farm_late"] else reason
+        fee = farm_cancel_amounts(db, so)[1] if terms["farm_late"] and not _is_cash(payment) else 0.0
+        refunded = _refund_store_order(db, payment, so, so_reason, terms["refund"])
         payouts_service.handle_refund_ledger_adjustment(db, so)
-        _restore_stock_and_promo(db, so)  # paid/completed always had its stock taken
+        _restore_stock_and_promo(db, so)
         so.status = "cancelled"
-        db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, reason))
+        db.add(_record_cancellation(order.id, so.id, cancelled_by, cancelled_by_role, so_reason))
+        if refunded and fee > 0:
+            payouts_service.create_cancellation_fee_entry(db, so, fee)
+        if terms["farm_late"]:
+            late_fees[so.id] = fee if refunded else 0.0
+        db.flush()  # the next part's terms see this one cancelled
 
     if pending:
+        late_fees.update({so.id: 0.0 for so in pending if late[so.id]})
         if payment and payment.stripe_setup_intent_id and not payment.stripe_payment_intent_id:
             # A pod order before its charge: no money has moved.
             stock_taken = {so.id: _stock_was_taken(payment, so) for so in pending}
@@ -1091,7 +1336,10 @@ def cancel_whole_order(db: Session, customer_id: str, order_id: str, cancelled_b
     for so in store_orders:
         delivery_service.release_stop(db, so)
     db.commit()
-    _notify_farms_of_customer_cancellation(db, store_orders)
+    _notify_farms_of_customer_cancellation(db, [so for so in store_orders if so.id not in late_fees])
+    for so in store_orders:
+        if so.id in late_fees:
+            _notify_farm_not_ready(db, so, late_fees[so.id])
     return build_order_out(db, order.id)
 
 
@@ -1117,29 +1365,18 @@ def delivery_tracking(db: Session, customer_id: str, order_id: str, store_order_
 
 
 def mark_store_order_completed(db: Session, customer_id: str, order_id: str, store_order_id: str) -> dict:
-    """Customer-initiated 'I picked this up' confirmation — only once the
-    farm has marked it ready_for_pickup. For a cash order this is also the
-    moment the cash changes hands, so its ledger entry records the cash the
-    farmer collected (see app/payouts/service.py)."""
+    """The customer's old "Mark as received". Since 2026-11-20 only the farm
+    can hand an order over, with the customer's 4-digit code
+    (app/pickup/service.py::hand_over) — so this always refuses. Older app
+    builds still show the button."""
     order = get_owned_order(db, customer_id, order_id)
     store_order = db.query(StoreOrder).filter(StoreOrder.id == store_order_id, StoreOrder.order_id == order.id).first()
     if not store_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store order not found")
-
-    payment = db.query(Payment).filter(Payment.order_id == order.id).first()
-    is_cash = payment is not None and payment.payment_method == "cash_on_pickup"
-    if store_order.status != "ready_for_pickup":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="The farm hasn't marked this order ready for pickup yet",
-        )
-    store_order.status = "completed"
-    payouts_service.create_ledger_entry_for_completion(
-        db, store_order, cash_collected=float(store_order.total) if is_cash else 0.0
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="The farm now confirms pickup with your 4-digit code. Please update the app to see it.",
     )
-    _sync_cash_payment_status(db, order.id, payment)
-    db.commit()
-    return build_order_out(db, order.id)
 
 
 # --- Farmer-side actions (Farmer F3) -----------------------------------------
@@ -1163,50 +1400,12 @@ def get_farmer_store_order(db: Session, farmer_id, store_order_id: str) -> Store
     return store_order
 
 
-def mark_store_order_ready_for_pickup(db: Session, farmer_id, store_order_id: str) -> StoreOrder:
-    """The farm has the order packed: card orders go paid -> ready_for_pickup,
-    cash orders pending_payment -> ready_for_pickup (they're paid at pickup).
-    The customer's "Mark as Received" unlocks from here."""
-    store_order = get_farmer_store_order(db, farmer_id, store_order_id)
-    if store_order.fulfillment_method == "delivery":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Delivery orders go out with their delivery run — see Deliveries.",
-        )
-    payment = db.query(Payment).filter(Payment.order_id == store_order.order_id).first()
-    is_cash = payment is not None and payment.payment_method == "cash_on_pickup"
-    preparable_status = "pending_payment" if is_cash else "paid"
-    if store_order.status != preparable_status:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"This order can't be marked ready (current status: '{store_order.status}')",
-        )
-    store_order.status = "ready_for_pickup"
-    _sync_cash_payment_status(db, store_order.order_id, payment)
-    db.commit()
-
-    order = db.query(Order).filter(Order.id == store_order.order_id).one()
-    address = ", ".join(p for p in (store_order.pickup_address_street, store_order.pickup_address_city) if p)
-    notify(
-        db,
-        order.customer_id,
-        "order_ready",
-        {
-            "farm_name": store_order.farm_name,
-            "order_id": str(order.id),
-            "pickup_address": address or None,
-            "cash_total": float(store_order.total) if is_cash else None,
-        },
-        dedupe_key=f"order_ready:{store_order.id}",
-    )
-    return store_order
-
-
 def farmer_cancel_store_order(db: Session, farmer_id, store_order_id: str, reason: str) -> StoreOrder:
-    """The farm can't fill the order (out of stock, ...). The customer gets a
-    full refund to their card; the farmer bears the service fee, deducted
-    from their next payout (decided with the user). Cancelling a cash order
-    costs the farmer nothing — no money was collected."""
+    """The farm can't fill the order (out of stock, ...). The customer gets
+    their part back in full; the farmer bears the service fee — on a Harvest
+    Pass order the 5% it would have been — deducted from their next payout
+    (farm_cancel_amounts). Cancelling a cash order costs the farmer nothing —
+    no money was collected."""
     store_order = get_farmer_store_order(db, farmer_id, store_order_id)
     if store_order.status not in _FARMER_CANCELLABLE_STORE_ORDER_STATUSES:
         raise HTTPException(
@@ -1214,9 +1413,12 @@ def farmer_cancel_store_order(db: Session, farmer_id, store_order_id: str, reaso
             detail=f"This order can't be cancelled (current status: '{store_order.status}')",
         )
     order = db.query(Order).filter(Order.id == store_order.order_id).one()
-    refunded_to_card = _cancel_one_store_order(db, order, store_order, farmer_id, "farmer", reason)
-    if refunded_to_card:
-        payouts_service.create_cancellation_fee_entry(db, store_order)
+    refund_amount, farm_fee = None, 0.0
+    if store_order.status in _REFUNDABLE_STORE_ORDER_STATUSES and not _is_cash(_payment_of(db, order.id)):
+        refund_amount, farm_fee = farm_cancel_amounts(db, store_order)
+    refunded = _cancel_one_store_order(db, order, store_order, farmer_id, "farmer", reason, refund_amount=refund_amount)
+    if refunded:
+        payouts_service.create_cancellation_fee_entry(db, store_order, farm_fee)
     run = delivery_service.release_stop(db, store_order)
     db.commit()
     delivery_service.notify_after_release(db, run)
@@ -1228,7 +1430,7 @@ def farmer_cancel_store_order(db: Session, farmer_id, store_order_id: str, reaso
             "farm_name": store_order.farm_name,
             "order_id": str(order.id),
             "reason": reason,
-            "refund_amount": float(store_order.total) if refunded_to_card else 0,
+            "refund_amount": refunded,
         },
         dedupe_key=f"order_cancelled:{store_order.id}",
     )
@@ -1306,7 +1508,7 @@ def reorder(db: Session, customer_id: str, order_id: str) -> dict:
 # store_order was refunded (or never captured), so it contributes nothing
 # to spending/savings/insights even if the parent order also has paid
 # siblings.
-_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "out_for_delivery", "completed")
+_KEPT_STORE_ORDER_STATUSES = ("paid", "ready_for_pickup", "out_for_delivery", "completed", "not_picked")
 
 
 # Rolling windows, not calendar-based (no "this month" edge cases to

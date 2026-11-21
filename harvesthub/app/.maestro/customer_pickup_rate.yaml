@@ -1,5 +1,6 @@
-# A customer opens an order that's ready, marks it received and gives the farm
-# 4 stars. Pass EMAIL, PASSWORD and FARM (the order's farm, newest order first).
+# After the farm handed it over with their code (farmer_hand_over.yaml), the
+# customer sees it picked up and gives the farm 4 stars. Pass EMAIL, PASSWORD
+# and FARM (the order's farm, newest order first).
 appId: com.harvesthubmarket.app
 ---
 - runFlow:
@@ -8,20 +9,13 @@ appId: com.harvesthubmarket.app
 - extendedWaitUntil:
     visible: ${FARM}
     timeout: 30000
-# The list says where each order stands (item 17).
-- assertVisible: "Ready for pickup"
+# The list says where each order stands (item 17); a finished one is green.
+- assertVisible: "Picked up"
 - tapOn: ${FARM}
 - extendedWaitUntil:
-    visible: "Ready for pickup"
+    visible: "Rate this farm"
     timeout: 20000
-- tapOn: "Mark as Received"
-# One tap can't end it by mistake any more (item 18).
-- assertVisible: "Picked up your order\\?"
-- tapOn: "(?i)yes, i have it"
-- extendedWaitUntil:
-    visible: "Completed"
-    timeout: 20000
-- assertVisible: "Rate this farm"
+- assertVisible: "Report a problem.*"
 # The stars have names now, and room to tap (item 19).
 - tapOn: "4 stars"
 - extendedWaitUntil:

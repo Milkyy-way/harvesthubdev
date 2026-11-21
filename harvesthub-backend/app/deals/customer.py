@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.geo import KM_PER_MILE, MAX_BROWSE_MILES, haversine_km
 from app.core.localtime import LOCAL_TZ
-from app.core.pricing import MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL, SERVICE_FEE_RATE
+from app.core.pricing import service_fees
 from app.core.tax import compute_item_tax
 from app.customers.models import CustomerProfile
 from app.customers.places import browse_point
@@ -99,18 +99,19 @@ def price_order(
     deal: GroupDeal, product: Product, farmer: FarmerProfile, units: int, delivery_fee: float, is_member: bool, unit_price=None
 ) -> dict:
     """The same sums as a regular checkout (app/checkout/service.py): the service
-    fee, the Harvest Pass waiver at $25 of items, and tax by the farm's state."""
+    fee (with the 30¢ under $25, as the deal order is a payment on its own), the
+    Harvest Pass waiver at $25 of items, and tax by the farm's state."""
     per_unit = service.dec(deal.deal_price if unit_price is None else unit_price)
     share_price = service.money(per_unit * service.dec(deal.share_size))
     subtotal = float(service.money(share_price * units))
-    full_service_fee = round(subtotal * SERVICE_FEE_RATE, 2)
-    member_savings = full_service_fee if is_member and subtotal >= MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL else 0.0
-    service_fee = round(full_service_fee - member_savings, 2)
+    fee = service_fees([subtotal], is_member)[0]
+    service_fee, member_savings = fee["service_fee"], fee["member_savings"]
     tax = round(compute_item_tax(farmer.address_state, product.tax_category, subtotal), 2)
     return {
         "share_price": float(share_price),
         "subtotal": subtotal,
         "service_fee": service_fee,
+        "fixed_fee": fee["fixed_fee"],
         "member_savings": member_savings,
         "delivery_fee": round(float(delivery_fee), 2),
         "tax": tax,

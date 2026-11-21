@@ -15,7 +15,7 @@ type Props = {
   rebooking?: boolean;
 };
 
-type Tone = 'ready' | 'active' | 'waiting' | 'done' | 'cancelled';
+type Tone = 'ready' | 'active' | 'waiting' | 'done' | 'cancelled' | 'picked' | 'missed' | 'mixed';
 
 // One word for where the whole order stands, the thing a customer opens the
 // list to find out. The most urgent farm wins: ready beats preparing.
@@ -35,8 +35,25 @@ export function orderStatus(order: Order): { label: string; tone: Tone } {
     return { label: 'Awaiting payment', tone: 'waiting' };
   }
   if (statuses.length > 0 && statuses.every((s) => s === 'cancelled')) return { label: 'Cancelled', tone: 'cancelled' };
-  return { label: 'Completed', tone: 'done' };
+  // Finished (2026-11-20): green when everything was picked up or delivered,
+  // red when nothing was picked up in time, amber when it's some of each.
+  const kept = order.store_orders.filter((so) => so.status !== 'cancelled');
+  const handedOver = kept.filter((so) => so.status === 'completed');
+  if (handedOver.length === kept.length) {
+    const delivered = kept.every((so) => so.fulfillment_method === 'delivery');
+    const pickedUp = kept.every((so) => so.fulfillment_method === 'pickup');
+    return { label: delivered ? 'Delivered' : pickedUp ? 'Picked up' : 'Completed', tone: 'picked' };
+  }
+  if (handedOver.length === 0) return { label: 'Not picked up', tone: 'missed' };
+  return { label: 'Partly picked up', tone: 'mixed' };
 }
+
+// The whole card is tinted once the order is finished.
+const CARD_TINT: Partial<Record<Tone, string>> = {
+  picked: '#EAF2EC',
+  missed: '#F6E7E5',
+  mixed: '#F7EBD2',
+};
 
 // "2 × Kale, 1 × Strawberry Jam and 3 more"
 function itemSummary(order: Order): string {
@@ -56,7 +73,10 @@ export function OrderCard({ order, onPress, showRebook, onRebook, rebooking }: P
   const isDeal = order.store_orders.some((so) => so.group_deal_id);
 
   return (
-    <Pressable style={({ pressed }) => [styles.container, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable
+      style={({ pressed }) => [styles.container, CARD_TINT[status.tone] ? { backgroundColor: CARD_TINT[status.tone] } : null, pressed && styles.pressed]}
+      onPress={onPress}
+    >
       {showPhoto ? (
         <Image
           source={{ uri: firstFarm!.photo_url! }}
@@ -138,6 +158,12 @@ const styles = StyleSheet.create({
   doneText: { color: colors.textMuted },
   cancelled: { backgroundColor: '#F6E7E5' },
   cancelledText: { color: colors.danger },
+  picked: { backgroundColor: colors.surface },
+  pickedText: { color: colors.primary },
+  missed: { backgroundColor: colors.surface },
+  missedText: { color: colors.danger },
+  mixed: { backgroundColor: colors.surface },
+  mixedText: { color: '#8A6216' },
   rebookButton: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -22,7 +22,7 @@ import stripe
 
 import hh
 from seed import FARMS, customer_email, seed_neighbours
-from shop import expected, fill_cart, payment, store_orders
+from shop import SMALL_ORDER_BELOW, expected, fill_cart, items_total, payment, store_orders
 
 ET = ZoneInfo("America/New_York")
 POD_FEE = 4.50
@@ -148,7 +148,7 @@ expect_refused("after the cutoff a pod order can't be cancelled",
 jobs = hh.run_jobs()
 r.note(f"job result: {({k: v for k, v in jobs.items() if k.startswith('pod')})}")
 share = pod_share(POD_FEE, 2)
-exp_host = expected("A", lines[host.id])
+exp_host = expected("A", lines[host.id], small=items_total(lines[host.id]) < SMALL_ORDER_BELOW)
 so_host = store_orders(orders_by[host.id])[farm_a.id]
 p_host = payment(orders_by[host.id])
 r.check("the fee was split between the 2 households that ordered: $2.25 each", share == 2.25 and hh.q1(
@@ -168,7 +168,7 @@ confirm_setup(new_card["setup_intent_client_secret"], "pm_card_visa")
 second.post(f"/orders/{orders_by[second.id]}/sync-payment-status")
 p_second = payment(orders_by[second.id])
 so_second = store_orders(orders_by[second.id])[farm_a.id]
-exp_second = expected("A", lines[second.id])
+exp_second = expected("A", lines[second.id], small=items_total(lines[second.id]) < SMALL_ORDER_BELOW)
 r.check("with a new card, the neighbour is charged the same $2.25 share", p_second["status"] == "succeeded" and so_second["total"] == round(exp_second["total"] + share, 2),
         (p_second, so_second))
 fees = hh.q1("select sum(delivery_fee)::float as f from store_orders where order_id in (%(a)s, %(b)s)", a=orders_by[host.id], b=orders_by[second.id])["f"]

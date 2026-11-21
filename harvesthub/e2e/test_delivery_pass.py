@@ -14,7 +14,7 @@ import stripe
 
 import hh
 from seed import FARMS, customer_email
-from shop import expected, fill_cart, payment, store_orders
+from shop import SMALL_ORDER_BELOW, expected, fill_cart, items_total, payment, store_orders
 
 r = hh.Report("delivery-pass")
 farm = {f["key"]: hh.User(f["email"]) for f in FARMS}
@@ -40,7 +40,7 @@ far_options = far.get("/delivery/options", params={"farmer_ids": farm["A"].id})[
 r.check("a customer 9 miles away (past 8) can't, and is told why", not far_options["available"] and far_options["reason"], far_options.get("reason"))
 
 group = {"farmer_id": farm["A"].id, "fulfillment_method": "delivery", "delivery_starts_at": slot["starts_at"]}
-exp = expected("A", lines)
+exp = expected("A", lines, small=items_total(lines) < SMALL_ORDER_BELOW)
 preview = cust.post("/checkout/preview", {"groups": [group]})["groups"][0]
 r.check("checkout adds the farm's $5 delivery fee", preview["delivery_fee"] == 5.0 and preview["farm_total"] == round(exp["total"] + 5, 2),
         (preview["farm_total"], exp["total"]))
@@ -101,7 +101,7 @@ r.check("$25 or more: no service fee, and the saving is shown", big["groups"][0]
         (big["groups"][0]["service_fee"], big["member_savings"]))
 fill_cart(member, [("ZZ Basil", 2)])  # $6
 small = member.post("/checkout/preview", {"groups": [{"farmer_id": farm["C"].id, "fulfillment_method": "pickup"}]})
-r.check("under $25: the service fee still applies", small["groups"][0]["service_fee"] == 0.30, small["groups"][0]["service_fee"])
+r.check("under $25: the service fee still applies (5% plus 30¢)", small["groups"][0]["service_fee"] == 0.60, small["groups"][0]["service_fee"])
 member.post("/membership/start-free")
 r.check("tapping Start free month again doesn't add a second month",
         hh.q1("select count(*) as n from harvest_pass_free_periods where customer_id = %(c)s", c=member.id)["n"] == 1)

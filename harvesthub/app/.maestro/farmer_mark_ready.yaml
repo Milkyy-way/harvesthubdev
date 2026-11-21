@@ -1,5 +1,6 @@
 # A farmer sees a paid order (placed by run_ui.py) with the customer's name and
-# phone and the earnings at 10%, and marks it ready for pickup.
+# phone and the earnings at 10%, and marks it ready for pickup now (2026-11-20:
+# "Ready now" or "from a later time", and the customer gets a code).
 # Pass EMAIL, PASSWORD, CUSTOMER (the customer's name) and EARNINGS (like "\\$5\\.85").
 appId: com.harvesthubmarket.app
 ---
@@ -13,6 +14,12 @@ appId: com.harvesthubmarket.app
 - assertVisible: "Your earnings \\(est\\.\\)"
 - assertVisible: ${EARNINGS}
 - tapOn: "Mark ready for pickup"
+- extendedWaitUntil:
+    visible: "Ready for pickup\\?"
+    timeout: 10000
+- assertVisible: "Ready now"
+- assertVisible: "Ready from a later time"
+- tapOn: "Mark ready"
 - extendedWaitUntil:
     visible: "Nothing in .To prepare."
     timeout: 20000

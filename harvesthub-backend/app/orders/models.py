@@ -46,7 +46,7 @@ class StoreOrder(Base):
     # What Harvest Pass took off this farm's order (the waived service fee) — see 0028.
     member_savings = Column(Numeric(10, 2), nullable=False, default=0)
 
-    # + 'ready_for_pickup' (0025), 'out_for_delivery' (0032)
+    # + 'ready_for_pickup' (0025), 'out_for_delivery' (0032), 'not_picked' (0042)
     status = Column(String, nullable=False, default="pending_payment")
     # When the farmer may see this order and the customer's name/phone:
     # card payment succeeded, or placed as cash on pickup. Null = never shown.
@@ -66,6 +66,34 @@ class StoreOrder(Base):
     # From a group deal (0037): its stock was set aside by the deal, and it's
     # charged on a saved card (app/deals/closing.py).
     group_deal_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # The service fee's parts (0042, app/core/pricing.py::service_fees): the
+    # 30¢ for a payment under $25 (on one farm's part), and, paid at the
+    # farm, the fee taken off as a discount.
+    fixed_fee = Column(Numeric(10, 2), nullable=False, default=0)
+    cash_discount = Column(Numeric(10, 2), nullable=False, default=0)
+    # Its stock is off the products (from checkout on, 0042); given back,
+    # and this cleared, if it's cancelled or not picked up.
+    stock_held = Column(Boolean, nullable=False, default=False)
+
+    # Pickup (0042, app/pickup/): the farm tapped Ready at ready_at, for a
+    # window from pickup_starts_at; the customer shows pickup_code.
+    ready_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_starts_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_ends_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_extended_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_code = Column(String, nullable=True)
+    pickup_code_failures = Column(Integer, nullable=False, default=0)
+    pickup_code_locked_until = Column(TIMESTAMP(timezone=True), nullable=True)
+    pickup_confirmed_by = Column(String, nullable=True)  # 'code' | 'backup'
+    pickup_backup_reason = Column(String, nullable=True)
+    # Handed over (picked up, or delivered), or the window ended without it.
+    completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    not_picked_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # A cash order not picked up: "Did you collect this order?" ('yes' | 'no').
+    collected_answer = Column(String, nullable=True)
+    collected_answered_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 

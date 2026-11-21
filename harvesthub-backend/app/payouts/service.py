@@ -28,7 +28,17 @@ def create_ledger_entry_for_completion(db: Session, store_order: StoreOrder, cas
     collected, deducted from their next weekly payout.
 
     A delivery fee is the farm's in full (it does the driving): it's part of
-    gross, but the commission is only ever on the goods."""
+    gross, but the commission is only ever on the goods.
+
+    At most one per store order: a card order the customer didn't pick up
+    already has its entry (the farm is paid), so a late handover adds none."""
+    if (
+        db.query(LedgerEntry.id)
+        .filter(LedgerEntry.store_order_id == store_order.id, LedgerEntry.entry_type == "order")
+        .first()
+        is not None
+    ):
+        return
     goods = round(float(store_order.subtotal) - float(store_order.promo_discount), 2)
     commission = round(goods * FARMER_COMMISSION_RATE, 2)
     gross = round(goods + float(store_order.delivery_fee or 0), 2)
@@ -101,13 +111,15 @@ def handle_refund_ledger_adjustment(db: Session, store_order: StoreOrder) -> Non
     )
 
 
-def create_cancellation_fee_entry(db: Session, store_order: StoreOrder) -> None:
+def create_cancellation_fee_entry(db: Session, store_order: StoreOrder, fee: float) -> None:
     """A farmer cancelled a store order the customer had already paid for:
-    the customer is refunded in full, and the farmer bears the platform's
-    service fee (decided with the user) — deducted from their next weekly
-    payout like any other open entry. Does NOT commit (the caller commits
-    with the cancellation). At most one per store order (0025's unique index)."""
-    fee = round(float(store_order.service_fee), 2)
+    the customer is refunded in full, and the farmer bears the service fee
+    (decided with the user) — deducted from their next weekly payout like any
+    other open entry. On a Harvest Pass order that's the 5% the fee would have
+    been (2026-11-20); the caller works it out. Does NOT commit (the caller
+    commits with the cancellation). At most one per store order (0025's
+    unique index)."""
+    fee = round(float(fee), 2)
     if fee <= 0:
         return
     period_start, period_end = pay_period_for(date.today())
@@ -123,6 +135,39 @@ def create_cancellation_fee_entry(db: Session, store_order: StoreOrder) -> None:
             cash_collected=0,
             fee_amount=fee,
             net_amount=-fee,
+            pay_period_start=period_start,
+            pay_period_end=period_end,
+            status="open",
+        )
+    )
+
+
+def create_problem_adjustment(db: Session, store_order: StoreOrder, goods: float, delivery_fee: float = 0.0) -> None:
+    """HarvestHub refunded part of a handed-over order after a reported
+    problem (app/problems/service.py): the farm gives back its share of the
+    refunded goods (and any delivery fee refunded), and HarvestHub gives back
+    its commission on them — the same split as the order itself. Tax and the
+    service fee come from HarvestHub. Rides into the farm's next payout.
+    Does NOT commit."""
+    goods = round(goods, 2)
+    delivery_fee = round(delivery_fee, 2)
+    if goods <= 0 and delivery_fee <= 0:
+        return
+    commission = round(goods * FARMER_COMMISSION_RATE, 2)
+    gross = round(goods + delivery_fee, 2)
+    period_start, period_end = pay_period_for(date.today())
+    db.add(
+        LedgerEntry(
+            id=uuid.uuid4(),
+            farmer_id=store_order.farmer_id,
+            store_order_id=store_order.id,
+            entry_type="refund_adjustment",
+            gross_amount=-gross,
+            commission_rate=FARMER_COMMISSION_RATE,
+            commission_amount=-commission,
+            cash_collected=0,
+            fee_amount=0,
+            net_amount=-round(gross - commission, 2),
             pay_period_start=period_start,
             pay_period_end=period_end,
             status="open",

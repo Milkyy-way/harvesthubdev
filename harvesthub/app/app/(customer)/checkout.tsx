@@ -37,6 +37,10 @@ export default function CheckoutScreen() {
   const [appliedPromoCodes, setAppliedPromoCodes] = useState<Record<string, string>>({});
   const [applyingPromoFor, setApplyingPromoFor] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<OrderPaymentMethod | null>(null);
+  // Paying at the farm takes the service fee off (2026-11-20): the totals
+  // are priced for the chosen payment method.
+  const paymentMethodRef = useRef<OrderPaymentMethod | null>(null);
+  paymentMethodRef.current = paymentMethod;
   const [placingOrder, setPlacingOrder] = useState(false);
   const deliveryProblem = preview?.groups.find((g) => g.delivery_error)?.delivery_error ?? null;
   const canPlaceOrder = Boolean(paymentMethod) && !placingOrder && !deliveryProblem;
@@ -59,6 +63,7 @@ export default function CheckoutScreen() {
             delivery_starts_at: fulfillmentByFarm[farmerId]?.deliverySlot ?? null,
             pod_id: fulfillmentByFarm[farmerId]?.method === 'delivery' ? (fulfillmentByFarm[farmerId]?.podId ?? null) : null,
           })),
+          payment_method: paymentMethodRef.current ?? 'card',
         })
         .then((res) => {
           setPreview(res.data);
@@ -112,6 +117,13 @@ export default function CheckoutScreen() {
   const openHarvestPass = () => {
     repriceOnFocus.current = true;
     router.push('/(customer)/harvest-pass');
+  };
+
+  const choosePaymentMethod = (method: OrderPaymentMethod) => {
+    if (method === paymentMethod) return;
+    paymentMethodRef.current = method;
+    setPaymentMethod(method);
+    loadPreview(appliedPromoCodes);
   };
 
   const handleApplyPromo = (farmerId: string) => {
@@ -217,16 +229,25 @@ export default function CheckoutScreen() {
               icon="credit-card"
               label={podGroup ? 'Card, charged when orders close' : Platform.OS === 'ios' ? 'Card or Apple Pay' : 'Card or Google Pay'}
               selected={paymentMethod === 'card'}
-              onPress={() => setPaymentMethod('card')}
+              onPress={() => choosePaymentMethod('card')}
             />
             {/* Delivery orders are paid by card — cash only when everything is a pickup. */}
             {preview.groups.every((g) => g.fulfillment_method === 'pickup') ? (
-              <PaymentOption
-                icon="payments"
-                label="Cash on Pickup"
-                selected={paymentMethod === 'cash_on_pickup'}
-                onPress={() => setPaymentMethod('cash_on_pickup')}
-              />
+              preview.cash_allowed === false ? (
+                <View style={[styles.paymentOption, styles.paymentOptionOff]}>
+                  <MaterialIcons name="payments" size={20} color={colors.textMuted} />
+                  <Text style={[styles.paymentOptionLabel, styles.paymentOptionOffText]}>
+                    Cash at pickup isn&apos;t available. {preview.cash_blocked_reason}
+                  </Text>
+                </View>
+              ) : (
+                <PaymentOption
+                  icon="payments"
+                  label="Cash at pickup · no service fee"
+                  selected={paymentMethod === 'cash_on_pickup'}
+                  onPress={() => choosePaymentMethod('cash_on_pickup')}
+                />
+              )
             ) : null}
           </View>
         ) : null}
@@ -251,6 +272,11 @@ export default function CheckoutScreen() {
               </Text>
             </View>
           ) : null}
+          <PolicyNotice
+            pickup={preview.groups.some((g) => g.fulfillment_method === 'pickup')}
+            cash={paymentMethod === 'cash_on_pickup'}
+            serviceFee={preview.groups.reduce((sum, g) => sum + g.service_fee, 0)}
+          />
           <ContactSharingNotice farmNames={preview.groups.map((g) => g.farm_name)} paymentMethod={paymentMethod} chargedAtCutoff={Boolean(podGroup)} />
           <Pressable
             style={[styles.placeOrderButton, !canPlaceOrder && styles.placeOrderButtonDisabled]}
@@ -301,6 +327,30 @@ function ContactSharingNotice({
       <Text style={styles.noticeText}>
         {farms} will receive your <Text style={styles.noticeBold}>full name and phone number</Text> (and, for delivery,
         your address) so they can reach you about your order — {when}. Nothing else is shared.
+      </Text>
+    </View>
+  );
+}
+
+// Shown and agreed to before paying (2026-11-20): the service fee isn't
+// refunded on a cancel, and a pickup not collected in time isn't refunded.
+// It's what HarvestHub relies on if a customer later disputes the payment.
+function PolicyNotice({ pickup, cash, serviceFee }: { pickup: boolean; cash: boolean; serviceFee: number }) {
+  return (
+    <View style={styles.notice}>
+      <MaterialIcons name="info-outline" size={16} color={colors.textMuted} />
+      <Text style={styles.noticeText}>
+        {pickup ? (
+          <>
+            <Text style={styles.noticeBold}>Pickup: </Text>
+            when the farm says your order is ready, you get a 4-digit code and 3 hours to pick it up (you can add one hour, once).{' '}
+            {cash
+              ? 'Orders not picked up in time go back on sale, and after 2 you\'ll need to pay in the app. '
+              : 'Orders not picked up in time go back on sale and aren\'t refunded. '}
+          </>
+        ) : null}
+        {!cash && serviceFee > 0 ? `If you cancel, you get everything back except the service fee. ` : ''}
+        By placing this order you agree to these terms.
       </Text>
     </View>
   );
@@ -373,6 +423,8 @@ const styles = StyleSheet.create({
   },
   paymentOptionSelected: { borderColor: colors.primary, backgroundColor: colors.tint },
   paymentOptionLabel: { flex: 1, fontSize: 14, color: colors.text },
+  paymentOptionOff: { opacity: 0.7 },
+  paymentOptionOffText: { fontSize: 12.5, color: colors.textMuted },
   paymentOptionLabelSelected: { fontWeight: '700' },
   footer: {
     backgroundColor: colors.background,

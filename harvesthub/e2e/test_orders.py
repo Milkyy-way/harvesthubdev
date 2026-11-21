@@ -4,14 +4,17 @@
    hand from the rules and compared with the checkout, the order, Stripe's
    charge and the database. Payment is confirmed with a Stripe test card and the
    Stripe webhook is expected to mark it paid by itself.
-2. The farmer marks it ready, the customer picks it up: the farmer's ledger
-   entry is checked at 10%.
-3. The customer cancels the other farm's part: Stripe refunds exactly that
-   farm's total, stock comes back.
-4. A cash order, start to finish: the farmer owes HarvestHub its share.
-5. A declined card: nothing is placed, nothing is taken.
-6. A farmer cancels a paid order: full refund, and the service fee comes off
-   the farmer's payout.
+2. The farmer marks it ready and hands it over with the customer's code (a
+   wrong code is refused, and so is the old "Mark as received"): the farmer's
+   ledger entry is checked at 10%.
+3. The customer cancels the other farm's part: Stripe refunds that farm's
+   total less its service fee, stock comes back.
+4. A cash order, start to finish: no service fee (a pay-at-farm discount), and
+   the farmer owes HarvestHub its commission and tax.
+5. A declined card: nothing is placed; its stock is held until it's removed.
+6. Once packed, the customer can't cancel. A farmer cancels a paid order: full
+   refund, and the service fee comes off the farmer's payout.
+(2026-11-20 rules. Not picked up, reminders and problem reports: test_pickup.py.)
 """
 import time
 
@@ -19,7 +22,7 @@ import stripe
 
 import hh
 from seed import FARMS, customer_email
-from shop import COMMISSION, expected, fill_cart, notices, payment, products, stock, store_orders
+from shop import COMMISSION, SMALL_ORDER_BELOW, expected, fill_cart, items_total, notices, payment, pickup_code, products, stock, store_orders
 
 r = hh.Report("orders")
 farm = {f["key"]: hh.User(f["email"]) for f in FARMS}
@@ -39,7 +42,7 @@ r.check("it shows on Farm A's page", code in {p["code"] for p in cust.get(f"/far
 
 lines_a = [("ZZ Tomatoes", 3), ("ZZ Strawberry Jam", 1)]
 lines_b = [("ZZ Eggs", 1), ("ZZ Apples", 5)]
-exp_a, exp_b = expected("A", lines_a, 0.10), expected("B", lines_b)
+exp_a, exp_b = expected("A", lines_a, 0.10, small=items_total(lines_a, lines_b) < SMALL_ORDER_BELOW), expected("B", lines_b)
 fill_cart(cust, lines_a + lines_b)
 before = {n: stock(n) for n, _ in lines_a + lines_b}
 groups = [{"farmer_id": farm["A"].id, "fulfillment_method": "pickup", "promo_code": "zztest10"},
@@ -63,7 +66,8 @@ r.check("Stripe was asked for exactly the grand total", stripe.PaymentIntent.ret
 r.check("farmers can't see it before it's paid",
         all(s["released_to_farmer_at"] is None for s in store_orders(order_id).values()) and
         order_id not in {o["order_id"] for o in farm["A"].get("/farmers/me/orders", params={"view": "to_prepare"})["items"]})
-r.check("no stock taken before payment", all(stock(n) == before[n] for n in before))
+r.check("stock is held from checkout, before payment", all(stock(n) == before[n] - q for n, q in lines_a + lines_b),
+        {n: (before[n], stock(n)) for n in before})
 
 intent = hh.pay(secret, "pm_card_visa")
 r.check("Stripe charged the test card", intent.status == "succeeded", intent.status)
@@ -77,7 +81,7 @@ r.check("both farms' orders are paid and released to the farmers",
         all(s["status"] == "paid" and s["released_to_farmer_at"] for s in sos.values()), {k: v["status"] for k, v in sos.items()})
 r.check("database totals match what Stripe charged",
         hh.cents(sum(s["total"] for s in sos.values())) == stripe.PaymentIntent.retrieve(pi_id).amount_received)
-r.check("stock went down by what was bought", all(stock(n) == before[n] - q for n, q in lines_a + lines_b),
+r.check("paying didn't take the stock a second time", all(stock(n) == before[n] - q for n, q in lines_a + lines_b),
         {n: (before[n], stock(n)) for n in before})
 r.check("the cart was emptied", hh.q1("select count(*) as n from cart_items where customer_id = %(c)s", c=cust.id)["n"] == 0)
 r.check("the promo use was counted once",
@@ -94,11 +98,27 @@ r.check("Farm A sees its earnings: goods less 10%", mine["estimated_earnings"] =
 r.check("Farm A sees the customer's name and phone now it's paid", bool(mine["customer_name"]) and bool(mine["customer_phone"]))
 
 # --- 2. Ready, picked up, ledger ----------------------------------------------------------
-print("\n== 2. Ready for pickup, picked up, the farmer's ledger")
+print("\n== 2. Ready for pickup, handed over with the code, the farmer's ledger")
 farm["A"].post(f"/farmers/me/orders/{so_a['id']}/ready")
 r.check("farmer marked it ready", store_orders(order_id)[farm["A"].id]["status"] == "ready_for_pickup")
 r.check("the customer was told it's ready", hh.wait_for(lambda: notices(cust.id, "order_ready", started), timeout=20))
-cust.post(f"/orders/{order_id}/store/{so_a['id']}/complete")
+code_a = pickup_code(cust, order_id, so_a["id"])
+r.check("the customer sees a 4-digit code", bool(code_a) and len(code_a) == 4 and code_a.isdigit(), code_a)
+mine = next(o for o in farm["A"].get("/farmers/me/orders", params={"view": "ready"})["items"] if o["id"] == so_a["id"])
+r.check("the farmer sees the 3-hour window, not the code", mine.get("pickup_ends_at") and mine.get("can_hand_over") and "pickup_code" not in mine, mine.get("pickup_ends_at"))
+try:
+    cust.post(f"/orders/{order_id}/store/{so_a['id']}/complete")
+    r.check("the old 'Mark as received' is refused", False, "it was allowed")
+except hh.ApiError as e:
+    r.check("the old 'Mark as received' is refused", e.status == 409, e)
+try:
+    farm["A"].post(f"/farmers/me/orders/{so_a['id']}/handover", {"code": "0000" if code_a != "0000" else "1111"})
+    r.check("a wrong code is refused", False, "it was accepted")
+except hh.ApiError as e:
+    r.check("a wrong code is refused", e.status == 400, e)
+farm["A"].post(f"/farmers/me/orders/{so_a['id']}/handover", {"code": code_a})
+r.check("handed over with the code", store_orders(order_id)[farm["A"].id]["status"] == "completed")
+r.check("the customer was asked to rate it", hh.wait_for(lambda: notices(cust.id, "picked_up", started), timeout=20))
 entry = hh.q1("select gross_amount::float as gross, commission_rate::float as rate, commission_amount::float as commission, "
               "cash_collected::float as cash, net_amount::float as net, status from farmer_ledger_entries "
               "where store_order_id = %(s)s and entry_type = 'order'", s=so_a["id"])
@@ -114,10 +134,11 @@ print("\n== 3. The customer cancels Farm B's part")
 before_b = {n: stock(n) for n, _ in lines_b}
 cust.post(f"/orders/{order_id}/store/{so_b['id']}/cancel", {"reason": "Autotest: changed my mind"})
 refund = hh.q1("select amount::float, status, stripe_refund_id from refunds where store_order_id = %(s)s", s=so_b["id"])
-r.check("a refund of exactly Farm B's total was recorded", refund and refund["amount"] == exp_b["total"], refund)
+back_b = round(exp_b["total"] - exp_b["fee"], 2)
+r.check("a refund of Farm B's total less its service fee was recorded", refund and refund["amount"] == back_b, (refund, back_b))
 if refund:
     sr = stripe.Refund.retrieve(refund["stripe_refund_id"])
-    r.check("Stripe shows the same refund", sr.amount == hh.cents(exp_b["total"]) and sr.payment_intent == pi_id and sr.status in ("succeeded", "pending"), sr.status)
+    r.check("Stripe shows the same refund", sr.amount == hh.cents(back_b) and sr.payment_intent == pi_id and sr.status in ("succeeded", "pending"), sr.status)
 r.check("Farm B's stock came back", all(stock(n) == before_b[n] + q for n, q in lines_b))
 r.check("Farm A's part is untouched", store_orders(order_id)[farm["A"].id]["status"] == "completed")
 r.check("Farm B was told", hh.wait_for(lambda: notices(farm["B"].id, "order_cancelled_by_customer", started), timeout=20))
@@ -131,8 +152,11 @@ except hh.ApiError as e:
 print("\n== 4. Cash on pickup")
 cust3 = hh.User(customer_email(3))
 lines_c = [("ZZ Honey", 1), ("ZZ Basil", 1)]
-exp_c = expected("C", lines_c)
+exp_c = expected("C", lines_c, small=items_total(lines_c) < SMALL_ORDER_BELOW, cash=True)
 fill_cart(cust3, lines_c)
+cash_preview = cust3.post("/checkout/preview", {"groups": [{"farmer_id": farm["C"].id, "fulfillment_method": "pickup"}], "payment_method": "cash_on_pickup"})
+pc = cash_preview["groups"][0]
+r.check("paying at the farm: no service fee, shown as a discount", (pc["service_fee"], pc["cash_discount"], pc["farm_total"]) == (0.0, exp_c["cash_discount"], exp_c["total"]), pc)
 cash_order = cust3.post("/orders", {"groups": [{"farmer_id": farm["C"].id, "fulfillment_method": "pickup"}], "payment_method": "cash_on_pickup"})
 cash_id = cash_order["order"]["id"]
 so_c = store_orders(cash_id)[farm["C"].id]
@@ -141,11 +165,11 @@ r.check("VA tax is 1% on raw food", so_c["tax"] == exp_c["tax"] and so_c["total"
 mine = next(o for o in farm["C"].get("/farmers/me/orders", params={"view": "to_prepare"})["items"] if o["id"] == so_c["id"])
 r.check("the farmer is told how much cash to collect", mine["amount_to_collect"] == exp_c["total"], mine["amount_to_collect"])
 farm["C"].post(f"/farmers/me/orders/{so_c['id']}/ready")
-cust3.post(f"/orders/{cash_id}/store/{so_c['id']}/complete")
+farm["C"].post(f"/farmers/me/orders/{so_c['id']}/handover", {"code": pickup_code(cust3, cash_id, so_c["id"])})
 entry = hh.q1("select gross_amount::float as gross, commission_amount::float as commission, cash_collected::float as cash, net_amount::float as net "
               "from farmer_ledger_entries where store_order_id = %(s)s", s=so_c["id"])
 owed = round(exp_c["goods"] - round(exp_c["goods"] * COMMISSION, 2) - exp_c["total"], 2)
-r.check("ledger: the farmer kept the cash, so they owe HarvestHub its commission, fee and tax",
+r.check("ledger: the farmer kept the cash, so they owe HarvestHub its commission and tax",
         entry and (entry["cash"], entry["net"]) == (exp_c["total"], owed), (entry, owed))
 r.check("the cash payment reads succeeded", payment(cash_id)["status"] == "succeeded", payment(cash_id))
 
@@ -160,8 +184,8 @@ intent = hh.pay(declined["client_secret"], "pm_card_chargeDeclined")
 r.check("Stripe declined the card", intent.status == "requires_payment_method", intent.status)
 time.sleep(5)
 sd = store_orders(declined["order"]["id"])[farm["A"].id]
-r.check("nothing was placed: not paid, not released, no stock taken",
-        sd["status"] == "pending_payment" and sd["released_to_farmer_at"] is None and stock("ZZ Kale") == before_kale, sd)
+r.check("nothing was placed: not paid, not released, its stock held meanwhile",
+        sd["status"] == "pending_payment" and sd["released_to_farmer_at"] is None and stock("ZZ Kale") == before_kale - 2, sd)
 r.check("the kale is still in the cart to try again", hh.q1("select count(*) as n from cart_items where customer_id = %(c)s", c=cust4.id)["n"] == 1)
 # 2026-11-14: a checkout nobody paid for isn't an order.
 shown = cust4.get(f"/orders/{declined['order']['id']}")
@@ -173,6 +197,7 @@ again = cust4.post(f"/orders/{declined['order']['id']}/resume-payment")
 r.check("Pay again: the same payment, ready for another card", again["client_secret"] == declined["client_secret"] and again["card_setup"] is False)
 cust4.post(f"/orders/{declined['order']['id']}/cancel", {"reason": "Autotest: gave up"})
 r.check("cancelling it cancels the Stripe payment", stripe.PaymentIntent.retrieve(declined["client_secret"].split("_secret_")[0]).status == "canceled")
+r.check("removing it gives the stock back", stock("ZZ Kale") == before_kale, (before_kale, stock("ZZ Kale")))
 r.check("and removes it: not listed, not counted as cancelled",
         hh.q1("select abandoned_at is not null as gone from orders where id = %(o)s", o=declined["order"]["id"])["gone"]
         and declined["order"]["id"] not in [o["id"] for o in cust4.get("/orders")]
@@ -186,12 +211,18 @@ r.check("closing the payment sheet removes the checkout", gone["removed"] is Tru
 print("\n== 6. The farmer cancels a paid order")
 cust5 = hh.User(customer_email(5))
 lines_k = [("ZZ Kale", 2)]
-exp_k = expected("A", lines_k)
+exp_k = expected("A", lines_k, small=items_total(lines_k) < SMALL_ORDER_BELOW)
 fill_cart(cust5, lines_k)
 o = cust5.post("/orders", {"groups": [{"farmer_id": farm["A"].id, "fulfillment_method": "pickup"}], "payment_method": "card"})
 hh.pay(o["client_secret"])
 hh.wait_for(lambda: (payment(o["order"]["id"]) or {}).get("status") == "succeeded", timeout=45) or cust5.post(f"/orders/{o['order']['id']}/sync-payment-status")
 so_k = store_orders(o["order"]["id"])[farm["A"].id]
+farm["A"].post(f"/farmers/me/orders/{so_k['id']}/ready")
+try:
+    cust5.post(f"/orders/{o['order']['id']}/store/{so_k['id']}/cancel", {"reason": "after packing"})
+    r.check("once packed, the customer can't cancel", False, "it was allowed")
+except hh.ApiError as e:
+    r.check("once packed, the customer can't cancel", e.status == 409, e)
 farm["A"].post(f"/farmers/me/orders/{so_k['id']}/cancel", {"reason": "Autotest: out of kale"})
 refund = hh.q1("select amount::float, stripe_refund_id from refunds where store_order_id = %(s)s", s=so_k["id"])
 r.check("the customer gets the whole total back", refund and refund["amount"] == exp_k["total"] and

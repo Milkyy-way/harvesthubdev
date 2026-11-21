@@ -9,6 +9,8 @@ from app.orders.schemas import (
     CreateOrderResponse,
     OrderOut,
     CancelRequest,
+    CollectedRequest,
+    ProblemReportRequest,
     ReorderResponse,
     ResumePaymentResponse,
     DiscardResponse,
@@ -16,6 +18,8 @@ from app.orders.schemas import (
 from app.ratings.schemas import SubmitRatingRequest
 from app.delivery.schemas import DeliveryPhotoOut, TrackingOut
 from app.pods import charging as pod_charging
+from app.pickup import service as pickup_service
+from app.problems import service as problems_service
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -94,7 +98,41 @@ def complete_store(
     db: Session = Depends(get_db),
     customer=Depends(get_current_customer),
 ):
+    # Older app builds' "Mark as received". It always refuses now: the farm
+    # hands the order over with the customer's code (app/pickup/).
     return service.mark_store_order_completed(db, str(customer.id), order_id, store_order_id)
+
+
+@router.post("/{order_id}/store/{store_order_id}/extend-pickup", response_model=OrderOut)
+def extend_pickup(order_id: str, store_order_id: str, db: Session = Depends(get_db), customer=Depends(get_current_customer)):
+    # One extra hour, once, while the pickup window is open.
+    return pickup_service.extend(db, str(customer.id), order_id, store_order_id)
+
+
+@router.post("/{order_id}/store/{store_order_id}/collected", response_model=OrderOut)
+def answer_collected(
+    order_id: str,
+    store_order_id: str,
+    payload: CollectedRequest,
+    db: Session = Depends(get_db),
+    customer=Depends(get_current_customer),
+):
+    # A cash order marked "not picked": did they collect it after all?
+    return pickup_service.answer_collected(db, str(customer.id), order_id, store_order_id, payload.collected)
+
+
+@router.post("/{order_id}/store/{store_order_id}/problem", response_model=OrderOut)
+def report_problem(
+    order_id: str,
+    store_order_id: str,
+    payload: ProblemReportRequest,
+    db: Session = Depends(get_db),
+    customer=Depends(get_current_customer),
+):
+    # Report a problem: 24 hours after the handover, or after "not picked".
+    return problems_service.create_report(
+        db, str(customer.id), order_id, store_order_id, payload.reason, payload.details, [i.model_dump() for i in payload.items]
+    )
 
 
 @router.post("/{order_id}/store/{store_order_id}/rating", response_model=OrderOut)

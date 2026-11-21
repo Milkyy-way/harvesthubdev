@@ -8,6 +8,9 @@ import { RatingStars } from './RatingStars';
 import { TextField } from '../TextField';
 import { DeliveryTracker } from './DeliveryTracker';
 import { PodChargeCard } from './PodChargeCard';
+import { PickupCodeCard } from './PickupCodeCard';
+import { PROBLEM_REASONS } from './ReportProblemSheet';
+import { dayAndClock } from '../../lib/pickupTime';
 
 type Props = {
   orderId: string;
@@ -19,7 +22,9 @@ type Props = {
   checkoutUnfinished?: boolean;
   busy: boolean;
   onCancel: () => void;
-  onMarkReceived: () => void;
+  onExtendPickup: () => void;
+  onReportProblem: () => void;
+  onAnswerCollected: (collected: boolean) => void;
   /** Resolves true once the rating (and comment) is saved. */
   onRate: (rating: number, comment?: string) => Promise<boolean>;
   ratingBusy: boolean;
@@ -31,7 +36,8 @@ const STATUS_LABELS: Record<StoreOrder['status'], string> = {
   paid: 'Paid — preparing',
   ready_for_pickup: 'Ready for pickup',
   out_for_delivery: 'On the way',
-  completed: 'Completed',
+  completed: 'Picked up',
+  not_picked: 'Not picked up',
   cancelled: 'Cancelled',
 };
 
@@ -41,6 +47,7 @@ const STATUS_COLORS: Record<StoreOrder['status'], string> = {
   ready_for_pickup: colors.primary,
   out_for_delivery: colors.primary,
   completed: colors.primaryDark,
+  not_picked: colors.danger,
   cancelled: colors.danger,
 };
 
@@ -53,7 +60,9 @@ export function OrderStoreSection({
   checkoutUnfinished = false,
   busy,
   onCancel,
-  onMarkReceived,
+  onExtendPickup,
+  onReportProblem,
+  onAnswerCollected,
   onRate,
   ratingBusy,
   onDeliveryUpdate,
@@ -79,9 +88,9 @@ export function OrderStoreSection({
           .filter(Boolean)
           .join(', ');
 
-  // The farm marks an order ready once it's packed; only then can the
-  // customer confirm pickup. A cash order is paid at pickup, so until then
-  // it stays 'pending_payment' (shown as "Preparing", not "Awaiting payment").
+  // The farm marks an order ready once it's packed, and hands it over when
+  // the customer tells it their code. A cash order is paid at pickup, so until
+  // then it stays 'pending_payment' (shown as "Preparing", not "Awaiting payment").
   const preparing = !isDelivery && (storeOrder.status === 'paid' || (paysAtPickup && storeOrder.status === 'pending_payment'));
   const podCharge = storeOrder.delivery?.pod_charge ?? null;
   // Before its charge, a pod order's amounts are the most it can come to.
@@ -109,13 +118,18 @@ export function OrderStoreSection({
   // Neither can a group deal's, once it exists: the deal has closed.
   const isDealOrder = !!storeOrder.group_deal_id;
   const dealCardFailed = isDealOrder && podCharge === null && paymentStatus === 'charge_failed' && storeOrder.status === 'pending_payment';
+  // The server decides (2026-11-20): not once the farm has packed it, and a
+  // delivery only until the farm's cutoff.
   const canCancel =
     !checkoutUnfinished &&
     !processing &&
-    !podClosed &&
-    !isDealOrder &&
-    (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid' || storeOrder.status === 'ready_for_pickup');
-  const canMarkReceived = storeOrder.status === 'ready_for_pickup';
+    (storeOrder.can_cancel ??
+      (!podClosed && !isDealOrder && (storeOrder.status === 'pending_payment' || storeOrder.status === 'paid')));
+  const cashDiscount = storeOrder.cash_discount ?? 0;
+  const problem = storeOrder.problem ?? null;
+  const problemLabel = problem ? PROBLEM_REASONS.find((r) => r.value === problem.reason)?.label ?? 'A problem' : null;
+  const notReadyInTime =
+    !!storeOrder.pickup?.free_cancel_from && new Date(storeOrder.pickup.free_cancel_from).getTime() <= Date.now();
 
   return (
     <View style={styles.container}>
@@ -199,6 +213,11 @@ export function OrderStoreSection({
         ) : null}
         {storeOrder.member_savings > 0 ? (
           <BreakdownLine label="Service fee · free with Harvest Pass" value={0} member />
+        ) : cashDiscount > 0 ? (
+          <>
+            <BreakdownLine label="Service fee" value={cashDiscount} />
+            <BreakdownLine label="Pay-at-farm discount" value={-cashDiscount} member />
+          </>
         ) : (
           <BreakdownLine label="Service fee" value={storeOrder.service_fee} />
         )}
@@ -228,8 +247,65 @@ export function OrderStoreSection({
           Your payment is being confirmed. That usually takes a few minutes, and you can cancel once it&apos;s through.
         </Text>
       ) : null}
-      {preparing ? (
-        <Text style={styles.hint}>The farm is packing your order — it&apos;ll show “Ready for pickup” here when it&apos;s ready.</Text>
+      {preparing && !notReadyInTime ? (
+        <Text style={styles.hint}>
+          The farm is packing your order. When it&apos;s ready you&apos;ll get a 4-digit pickup code here, and 3 hours to pick it up.
+        </Text>
+      ) : null}
+      {preparing && notReadyInTime && canCancel ? (
+        <Text style={styles.note}>
+          The farm hasn&apos;t packed this order within a day. You can keep waiting, or cancel it and get everything back
+          {storeOrder.cancel_refund ? ` ($${storeOrder.cancel_refund.toFixed(2)})` : ''}.
+        </Text>
+      ) : null}
+
+      <PickupCodeCard storeOrder={storeOrder} paysAtPickup={paysAtPickup} busy={busy} onExtend={onExtendPickup} />
+
+      {storeOrder.status === 'ready_for_pickup' && !canCancel && storeOrder.cancel_blocked_reason ? (
+        <Text style={styles.hint}>The farm has packed this order, so it can&apos;t be cancelled now.</Text>
+      ) : null}
+      {storeOrder.status === 'not_picked' ? (
+        <Text style={styles.note}>
+          {paysAtPickup
+            ? 'Not picked up in time, so it went back on sale. You haven\'t paid anything.'
+            : 'Not picked up in time, so it went back on sale. As our pickup policy says, it isn\'t refunded.'}
+        </Text>
+      ) : null}
+      {storeOrder.ask_collected ? (
+        <View style={styles.askCard}>
+          <Text style={styles.askTitle}>Did you collect this order?</Text>
+          <Text style={styles.askText}>The farm didn&apos;t confirm it with your code. If you did pick it up, let us know.</Text>
+          <View style={styles.askRow}>
+            <Pressable style={styles.askButton} onPress={() => onAnswerCollected(false)} disabled={busy}>
+              <Text style={styles.askButtonText}>No, I didn&apos;t</Text>
+            </Pressable>
+            <Pressable style={[styles.askButton, styles.askButtonYes]} onPress={() => onAnswerCollected(true)} disabled={busy}>
+              <Text style={[styles.askButtonText, styles.askButtonYesText]}>Yes, I did</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {problem ? (
+        <View style={styles.problemCard}>
+          <Text style={styles.problemTitle}>You reported: {problemLabel}</Text>
+          <Text style={styles.problemText}>
+            {problem.status === 'open'
+              ? "We're looking into it and will get back to you within 2 business days."
+              : problem.status === 'refunded'
+                ? `We refunded $${(problem.refund_amount ?? 0).toFixed(2)} to your card.${problem.note ? ` ${problem.note}` : ''}`
+                : problem.status === 'declined'
+                  ? `We looked into it and couldn't refund it.${problem.note ? ` ${problem.note}` : ''}`
+                  : `Sorted out with you directly.${problem.note ? ` ${problem.note}` : ''}`}
+          </Text>
+        </View>
+      ) : null}
+      {storeOrder.can_report_problem ? (
+        <Pressable style={styles.reportLink} onPress={onReportProblem} hitSlop={8} accessibilityRole="button">
+          <MaterialIcons name="report-problem" size={16} color={colors.primary} />
+          <Text style={styles.reportText}>
+            Report a problem{storeOrder.report_until ? ` (until ${dayAndClock(storeOrder.report_until)})` : ''}
+          </Text>
+        </Pressable>
       ) : null}
 
       {storeOrder.status === 'completed' ? (
@@ -270,22 +346,11 @@ export function OrderStoreSection({
       ) : null}
       {commentSent ? <Text style={styles.hint}>Thanks, your comment was sent to the farm.</Text> : null}
 
-      {canCancel || canMarkReceived ? (
+      {canCancel ? (
         <View style={styles.actionsRow}>
-          {canCancel ? (
-            <Pressable style={styles.cancelButton} onPress={onCancel} disabled={busy}>
-              {busy ? <ActivityIndicator size="small" color={colors.danger} /> : <Text style={styles.cancelText}>Cancel</Text>}
-            </Pressable>
-          ) : null}
-          {canMarkReceived ? (
-            <Pressable style={styles.receivedButton} onPress={onMarkReceived} disabled={busy}>
-              {busy ? (
-                <ActivityIndicator size="small" color={colors.white} />
-              ) : (
-                <Text style={styles.receivedText}>Mark as Received</Text>
-              )}
-            </Pressable>
-          ) : null}
+          <Pressable style={styles.cancelButton} onPress={onCancel} disabled={busy}>
+            {busy ? <ActivityIndicator size="small" color={colors.danger} /> : <Text style={styles.cancelText}>Cancel</Text>}
+          </Pressable>
         </View>
       ) : null}
     </View>
@@ -386,12 +451,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
-  receivedButton: {
+  askCard: { backgroundColor: colors.tint, borderRadius: radius.lg, padding: spacing.md, marginTop: spacing.sm },
+  askTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  askText: { fontSize: 12.5, lineHeight: 18, color: colors.text, marginTop: 2 },
+  askRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  askButton: {
     flex: 1,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radius.pill,
+    paddingVertical: 9,
     alignItems: 'center',
+    backgroundColor: colors.surface,
   },
-  receivedText: { color: colors.white, fontSize: 13, fontWeight: '700' },
+  askButtonYes: { backgroundColor: colors.primary },
+  askButtonText: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  askButtonYesText: { color: colors.white },
+  problemCard: { backgroundColor: colors.tint, borderRadius: radius.lg, padding: spacing.md, marginTop: spacing.sm },
+  problemTitle: { fontSize: 13.5, fontWeight: '700', color: colors.text },
+  problemText: { fontSize: 12.5, lineHeight: 18, color: colors.text, marginTop: 2 },
+  reportLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, alignSelf: 'flex-start' },
+  reportText: { fontSize: 13, fontWeight: '700', color: colors.primary },
 });

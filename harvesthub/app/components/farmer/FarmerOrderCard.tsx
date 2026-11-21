@@ -2,12 +2,14 @@ import { View, Text, Pressable, ActivityIndicator, Linking, StyleSheet } from 'r
 import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
+import { clock, dayAndClock } from '../../lib/pickupTime';
 import type { FarmerOrder } from '../../types/farmer';
 
 type Props = {
   order: FarmerOrder;
   busy: boolean;
   onMarkReady: () => void;
+  onHandOver: () => void;
   onCancel: () => void;
 };
 
@@ -17,13 +19,14 @@ const STATUS: Record<FarmerOrder['status'], { label: string; color: string }> = 
   ready_for_pickup: { label: 'Ready for pickup', color: colors.primary },
   out_for_delivery: { label: 'Out for delivery', color: colors.primary },
   completed: { label: 'Picked up', color: colors.primaryDark },
+  not_picked: { label: 'Not picked up', color: colors.danger },
   cancelled: { label: 'Cancelled', color: colors.danger },
 };
 
 // One customer's order with this farm, as the farmer sees it (Farmer F3).
 // The customer's phone is only present while the order is active — the
 // backend stops sending it once the order is picked up or cancelled.
-export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
+export function FarmerOrderCard({ order, busy, onMarkReady, onHandOver, onCancel }: Props) {
   const router = useRouter();
   const isDelivery = order.fulfillment_method === 'delivery';
   const status =
@@ -37,6 +40,13 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
   const ready = order.status === 'ready_for_pickup';
   const onItsWay = order.status === 'out_for_delivery';
   const placed = new Date(order.placed_at);
+  const notOpenYet = ready && !!order.pickup_starts_at && new Date(order.pickup_starts_at).getTime() > Date.now();
+  const pickupWindow =
+    ready && order.pickup_starts_at && order.pickup_ends_at
+      ? notOpenYet
+        ? `Pickup from ${dayAndClock(order.pickup_starts_at)} until ${clock(order.pickup_ends_at)}.`
+        : `Pickup until ${clock(order.pickup_ends_at)}${order.pickup_extended ? ' (the customer added an hour)' : ''}.`
+      : null;
 
   return (
     <View style={styles.card}>
@@ -116,7 +126,23 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
         </Text>
       ) : null}
 
-      {ready ? <Text style={styles.waiting}>Waiting for the customer to pick up.</Text> : null}
+      {ready ? (
+        <Text style={styles.waiting}>
+          {pickupWindow ?? 'Waiting for the customer to pick up.'} When they arrive, ask for their 4-digit code.
+        </Text>
+      ) : null}
+      {order.status === 'not_picked' ? (
+        <Text style={styles.cancelNote}>
+          The pickup time ended{order.not_picked_at ? ` at ${clock(order.not_picked_at)}` : ''}. The items went back on your
+          products.{isCash ? ' Nothing was collected.' : " You're still paid for it."}
+          {order.can_hand_over && order.hand_over_until
+            ? ` If the customer turns up, you can still hand it over until ${dayAndClock(order.hand_over_until)}.`
+            : ''}
+        </Text>
+      ) : null}
+      {order.status === 'completed' && order.picked_up_with === 'backup' ? (
+        <Text style={styles.waiting}>Handed over without the code (checked their phone).</Text>
+      ) : null}
 
       {toPrepare || ready || onItsWay ? (
         <View style={styles.actions}>
@@ -131,7 +157,17 @@ export function FarmerOrderCard({ order, busy, onMarkReady, onCancel }: Props) {
             <Pressable style={styles.readyButton} onPress={onMarkReady} disabled={busy}>
               {busy ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.readyText}>Mark ready for pickup</Text>}
             </Pressable>
+          ) : ready ? (
+            <Pressable style={styles.readyButton} onPress={onHandOver} disabled={busy}>
+              <Text style={styles.readyText}>Enter pickup code</Text>
+            </Pressable>
           ) : null}
+        </View>
+      ) : order.status === 'not_picked' && order.can_hand_over ? (
+        <View style={styles.actions}>
+          <Pressable style={styles.readyButton} onPress={onHandOver} disabled={busy}>
+            <Text style={styles.readyText}>Customer here? Enter their code</Text>
+          </Pressable>
         </View>
       ) : null}
     </View>

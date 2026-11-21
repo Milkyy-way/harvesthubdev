@@ -5,7 +5,7 @@ from app.products.models import Product
 from app.farmers.models import FarmerProfile
 from app.checkout.schemas import CheckoutGroupRequest
 from app.promotions.service import apply_promo
-from app.core.pricing import SERVICE_FEE_RATE, MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL
+from app.core.pricing import MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL, SMALL_ORDER_FEE, SMALL_ORDER_FEE_BELOW, service_fees
 from app.core.tax import compute_item_tax
 from app.membership.service import has_member_benefits
 from app.delivery import service as delivery_service
@@ -20,10 +20,15 @@ def _empty_preview(is_member: bool) -> dict:
         "member_potential_savings": 0.0,
         "member_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
         "items_subtotal": 0.0,
+        "small_order_fee": 0.0,
+        "small_order_fee_below": SMALL_ORDER_FEE_BELOW,
+        "pay_at_farm": False,
     }
 
 
-def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutGroupRequest]) -> dict:
+def build_checkout_preview(
+    db: Session, customer_id: str, groups: list[CheckoutGroupRequest], payment_method: str = "card"
+) -> dict:
     """A live estimate, not an order — nothing is written here. Items/
     prices/quantities are read fresh from cart_items on every call (never
     trusts client-supplied amounts); fulfillment_method and promo_code are
@@ -34,7 +39,12 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
     MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL. The waived amount is reported per
     farm as member_savings (snapshotted onto the store order). For a
     non-member, member_potential_savings is what Harvest Pass would have
-    saved them — the checkout upsell."""
+    saved them — the checkout upsell.
+
+    The service fee is app/core/pricing.py::service_fees: 5% of each farm's
+    items, plus 30¢ once (on the first farm) when the items come to less than
+    $25. Paying at the farm (payment_method 'cash_on_pickup') takes the fee
+    off as a discount, cash_discount."""
     is_member = has_member_benefits(db, customer_id)
     requested_farmer_ids = [g.farmer_id for g in groups]
     if not requested_farmer_ids:
@@ -77,8 +87,14 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
         sum(i["line_total"] for g in groups if g.farmer_id in farmer_by_id for i in items_by_farmer.get(g.farmer_id, [])),
         2,
     )
-    qualifies_for_member_benefit = items_subtotal >= MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL
-    waive_service_fee = is_member and qualifies_for_member_benefit
+    pay_at_farm = payment_method == "cash_on_pickup"
+    priced_groups = [g for g in groups if g.farmer_id in farmer_by_id]
+    fees = service_fees(
+        [round(sum(i["line_total"] for i in items_by_farmer.get(g.farmer_id, [])), 2) for g in priced_groups],
+        is_member,
+        pay_at_farm,
+    )
+    fee_by_group = {id(g): f for g, f in zip(priced_groups, fees)}
 
     result_groups = []
     grand_total = 0.0
@@ -102,12 +118,10 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
             else None
         )
         delivery_fee = delivery.get("delivery_fee", 0.0) if delivery else 0.0
-        full_service_fee = round(subtotal * SERVICE_FEE_RATE, 2)
-        member_savings = full_service_fee if waive_service_fee else 0.0
-        service_fee = round(full_service_fee - member_savings, 2)
+        fee = fee_by_group[id(group)]
+        service_fee, member_savings = fee["service_fee"], fee["member_savings"]
         member_savings_total += member_savings
-        if not is_member and qualifies_for_member_benefit:
-            potential_savings_total += full_service_fee
+        potential_savings_total += fee["member_potential"]
 
         # Per-item, not a single blended rate over the whole subtotal — a
         # farm's cart can mix raw/prepared items, which tax differently
@@ -155,6 +169,8 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
                 "pod_fee_low": delivery.get("pod_fee_low") if delivery else None,
                 "charge_at": delivery.get("charge_at") if delivery else None,
                 "service_fee": service_fee,
+                "fixed_fee": fee["fixed_fee"],
+                "cash_discount": fee["cash_discount"],
                 "member_savings": member_savings,
                 "tax": tax,
                 "farm_total": farm_total,
@@ -169,4 +185,9 @@ def build_checkout_preview(db: Session, customer_id: str, groups: list[CheckoutG
         "member_potential_savings": round(potential_savings_total, 2),
         "member_min_subtotal": MEMBER_FREE_SERVICE_FEE_MIN_SUBTOTAL,
         "items_subtotal": items_subtotal,
+        # The 30¢ added because the items are under small_order_fee_below
+        # (0 at the farm, where there's no card payment).
+        "small_order_fee": SMALL_ORDER_FEE if any(f["fixed_fee"] for f in fees) else 0.0,
+        "small_order_fee_below": SMALL_ORDER_FEE_BELOW,
+        "pay_at_farm": pay_at_farm,
     }

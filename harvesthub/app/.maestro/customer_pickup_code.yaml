@@ -1,0 +1,23 @@
+# A customer opens an order that's ready and sees their pickup code and how
+# long they have (2026-11-20). Pass EMAIL, PASSWORD, FARM and CODE (from the
+# database, set by run_ui.py).
+appId: com.harvesthubmarket.app
+---
+- runFlow:
+    file: subflows/login.yaml
+- tapOn: "Orders"
+- extendedWaitUntil:
+    visible: ${FARM}
+    timeout: 30000
+- assertVisible: "Ready for pickup"
+- tapOn: ${FARM}
+- extendedWaitUntil:
+    visible: "Your pickup code"
+    timeout: 20000
+- assertVisible: ${CODE}
+- assertVisible: "Pick up by .*"
+- assertVisible: "Running late\\? Add 1 hour"
+# Packed: no Cancel, and no "Mark as received" any more.
+- assertNotVisible: "Mark as Received"
+- assertVisible: "The farm has packed this order, so it can.t be cancelled now\\."
+- takeScreenshot: customer_pickup_code

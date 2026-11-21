@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -9,12 +10,13 @@ from app.orders import service as orders_service
 from app.payments.models import Payment, Refund
 from app.pods.models import Pod
 from app.core.localtime import window_label
+from app.pickup.rules import LATE_CONFIRM
 
 # Which store order statuses each Orders-tab segment shows.
 _VIEW_STATUSES = {
     "to_prepare": ("pending_payment", "paid"),  # pending_payment only ever appears here for cash orders (released at placement)
     "ready": ("ready_for_pickup", "out_for_delivery"),  # waiting for pickup, or on today's delivery run
-    "completed": ("completed",),
+    "completed": ("completed", "not_picked"),  # handed over, or the pickup time ended
     "cancelled": ("cancelled",),
 }
 _ACTIVE_STATUSES = ("pending_payment", "paid", "ready_for_pickup", "out_for_delivery")
@@ -57,15 +59,24 @@ def _build(db: Session, rows: list) -> list[dict]:
     pod_ids = {so.pod_id for so, _, _, _ in rows if so.pod_id}
     pod_names = dict(db.query(Pod.id, Pod.name).filter(Pod.id.in_(pod_ids)).all()) if pod_ids else {}
 
+    now = datetime.now(timezone.utc)
     results = []
     for so, order, payment, customer in rows:
         active = so.status in _ACTIVE_STATUSES
+        late_until = orders_service._as_aware(so.not_picked_at) + LATE_CONFIRM if so.not_picked_at else None
+        can_hand_over = so.fulfillment_method == "pickup" and (
+            so.status == "ready_for_pickup" or (so.status == "not_picked" and late_until is not None and now < late_until)
+        )
+        cancel_fee = 0.0
+        if so.status in orders_service._REFUNDABLE_STORE_ORDER_STATUSES and payment.payment_method != "cash_on_pickup":
+            cancel_fee = orders_service.farm_cancel_amounts(db, so)[1]
         is_cash = payment.payment_method == "cash_on_pickup"
         goods = round(float(so.subtotal) - float(so.promo_discount), 2)
         # The delivery fee is the farm's in full; commission is on the goods.
+        # A cash order nobody picked up brought in nothing.
         earnings = (
             round(goods - round(goods * FARMER_COMMISSION_RATE, 2) + float(so.delivery_fee or 0), 2)
-            if so.status != "cancelled"
+            if so.status != "cancelled" and not (so.status == "not_picked" and is_cash)
             else 0.0
         )
         is_delivery = so.fulfillment_method == "delivery"
@@ -78,7 +89,8 @@ def _build(db: Session, rows: list) -> list[dict]:
                 "status": so.status,
                 "payment_method": payment.payment_method,
                 "customer_name": customer.full_name,
-                "customer_phone": customer.phone if active else None,
+                # Also for a day after "not picked": they may still turn up.
+                "customer_phone": customer.phone if active or can_hand_over else None,
                 "fulfillment_method": so.fulfillment_method,
                 "delivery_window_label": (
                     window_label(so.delivery_window_starts_at, so.delivery_window_ends_at)
@@ -122,6 +134,16 @@ def _build(db: Session, rows: list) -> list[dict]:
                 "refunded_amount": float(refunded_by_store_order.get(so.id) or 0),
                 "cancelled_by": cancelled_by if so.status == "cancelled" else None,
                 "cancellation_reason": reason if so.status == "cancelled" else None,
+                "pickup_starts_at": orders_service._iso(so.pickup_starts_at),
+                "pickup_ends_at": orders_service._iso(so.pickup_ends_at),
+                "pickup_extended": so.pickup_extended_at is not None,
+                "completed_at": orders_service._iso(so.completed_at),
+                "not_picked_at": orders_service._iso(so.not_picked_at),
+                "can_hand_over": can_hand_over,
+                "hand_over_until": late_until.isoformat() if so.status == "not_picked" and late_until else None,
+                "picked_up_with": so.pickup_confirmed_by,
+                "cancel_fee": cancel_fee,
+                "customer_has_phone": bool(customer.phone and sum(c.isdigit() for c in customer.phone) >= 4),
             }
         )
     return results

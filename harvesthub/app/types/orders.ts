@@ -8,25 +8,55 @@ export type FulfillmentMethod = 'pickup' | 'delivery';
 // show based on device capability, the app doesn't distinguish which.
 export type OrderPaymentMethod = 'card' | 'cash_on_pickup';
 
-// card pickup:   pending_payment -> paid -> ready_for_pickup -> completed
-// cash pickup:   pending_payment ---------> ready_for_pickup -> completed
+// card pickup:   pending_payment -> paid -> ready_for_pickup -> completed | not_picked
+// cash pickup:   pending_payment ---------> ready_for_pickup -> completed | not_picked
 // card delivery: pending_payment -> paid -> out_for_delivery -> completed
+// not_picked (2026-11-20): the pickup time ended without the handover.
 export type StoreOrderStatus =
   | 'pending_payment'
   | 'paid'
   | 'ready_for_pickup'
   | 'out_for_delivery'
   | 'completed'
+  | 'not_picked'
   | 'cancelled';
 export type OrderStatus = 'active' | 'completed' | 'cancelled';
 
 export interface OrderLineItem {
+  id?: string; // the order line, for "Report a problem"
   product_id: string | null;
   product_name: string;
   unit: string;
   unit_price: number;
   quantity: number;
   line_total: number;
+}
+
+// A pickup's window and code (2026-11-20). The farm taps Ready (now or from
+// a later time); the window is 3 hours, plus one extra hour on request. The
+// customer shows the code and the farm enters it to hand the order over.
+export interface PickupInfo {
+  ready_at: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  extended: boolean;
+  can_extend: boolean;
+  // While it waits for pickup, and for a day after "not picked".
+  code: string | null;
+  picked_up_at: string | null;
+  not_picked_at: string | null;
+  // Not packed by then: cancelling gives everything back.
+  free_cancel_from: string | null;
+}
+
+export type ProblemReason = 'missing_item' | 'damaged' | 'wrong_item' | 'quality' | 'farm_closed' | 'other';
+
+export interface ProblemInfo {
+  status: 'open' | 'refunded' | 'declined' | 'handled';
+  reason: ProblemReason;
+  created_at: string | null;
+  refund_amount: number | null;
+  note: string | null; // HarvestHub's note to the customer
 }
 
 export interface StoreOrder {
@@ -49,6 +79,8 @@ export interface StoreOrder {
   delivery_fee: number;
   service_fee: number;
   member_savings: number; // Harvest Pass — the waived service fee
+  fixed_fee?: number; // the 30¢ part of service_fee, on a payment under $25
+  cash_discount?: number; // paid at the farm: the service fee taken off
   tax: number;
   total: number;
   refunded_amount: number;
@@ -59,6 +91,18 @@ export interface StoreOrder {
   items: OrderLineItem[];
   my_rating: number | null;
   delivery: DeliveryProgress | null; // delivery orders only
+  // What the customer can do now (the server decides): cancel, and what
+  // comes back — everything except the service fee — or why not.
+  can_cancel?: boolean;
+  cancel_blocked_reason?: string | null;
+  cancel_refund?: number;
+  cancel_keeps_service_fee?: boolean;
+  pickup?: PickupInfo | null; // pickup orders only
+  completed_at?: string | null; // handed over: picked up, or delivered
+  problem?: ProblemInfo | null;
+  can_report_problem?: boolean;
+  report_until?: string | null;
+  ask_collected?: boolean; // a cash order not picked up: "Did you collect it?"
 }
 
 export interface OrderPayment {

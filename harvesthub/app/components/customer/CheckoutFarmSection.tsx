@@ -100,9 +100,17 @@ export function CheckoutFarmSection({
         ) : null}
         {group.member_savings > 0 ? (
           <BreakdownLine label="Service fee · free with Harvest Pass" value={0} member />
+        ) : (group.cash_discount ?? 0) > 0 ? (
+          <>
+            <BreakdownLine label="Service fee" value={group.cash_discount!} />
+            <BreakdownLine label="Pay-at-farm discount" value={-group.cash_discount!} member />
+          </>
         ) : (
           <BreakdownLine label="Service fee" value={group.service_fee} />
         )}
+        {(group.fixed_fee ?? 0) > 0 ? (
+          <Text style={styles.feeNote}>Includes ${group.fixed_fee!.toFixed(2)} because this order is under $25.</Text>
+        ) : null}
         <BreakdownLine label="Tax" value={group.tax} />
         <View style={styles.divider} />
         <BreakdownLine label={group.pod_name ? 'The most you\'d pay' : 'Farm total'} value={group.farm_total} bold />
@@ -189,5 +197,6 @@ const styles = StyleSheet.create({
   breakdownValueHighlight: { color: colors.danger },
   breakdownMember: { color: colors.primary, fontWeight: '700' },
   podSavings: { fontSize: 12, fontWeight: '600', color: colors.primary, marginBottom: 3 },
+  feeNote: { fontSize: 11.5, color: colors.textMuted, marginTop: -1, marginBottom: 2 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.xs },
 });

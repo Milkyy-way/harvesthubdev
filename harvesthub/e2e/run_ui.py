@@ -76,15 +76,15 @@ def customer_promo_order(r):
     if "ZZTEST10" not in {c["code"] for c in farm_a.get("/farmers/me/promo-codes")}:
         farm_a.post("/farmers/me/promo-codes", {"code": "ZZTEST10", "discount_type": "percentage", "discount_value": 10, "show_on_farm_page": True})
     started = hh.q1("select now() as t")["t"]
-    r.check("promo order, screens: saw the promo, applied it and paid $14.97", maestro("customer_promo_order.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD))
+    r.check("promo order, screens: saw the promo, applied it and paid $15.27", maestro("customer_promo_order.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD))
     order = hh.q1("select o.id::text as id, y.status, y.stripe_payment_intent_id as pi from orders o join payments y on y.order_id = o.id "
                   "where o.customer_id = %(c)s and o.created_at >= %(t)s order by o.created_at desc limit 1", c=cust.id, t=started)
     if not r.check("promo order, database: the order exists", order is not None):
         return
     so = hh.q1("select status, promo_code, total::float as total from store_orders where order_id = %(o)s", o=order["id"])
-    r.check("promo order, database: paid $14.97 with ZZTEST10", order["status"] == "succeeded" and so["promo_code"] == "ZZTEST10" and so["total"] == 14.97, (order, so))
+    r.check("promo order, database: paid $15.27 with ZZTEST10", order["status"] == "succeeded" and so["promo_code"] == "ZZTEST10" and so["total"] == 15.27, (order, so))
     pi = stripe.PaymentIntent.retrieve(order["pi"])
-    r.check("promo order, Stripe: $14.97 charged", pi.status == "succeeded" and pi.amount_received == 1497)
+    r.check("promo order, Stripe: $15.27 charged", pi.status == "succeeded" and pi.amount_received == 1527)
 
 
 def customer_signup(r):
@@ -161,9 +161,16 @@ def customer_pickup_rate(r):
     if not so:
         r.check("pickup and rating: needs the ready order from the previous journey", False)
         return
-    r.check("pickup and rating, screens: marked received and rated 4 stars", maestro("customer_pickup_rate.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD, FARM=UI_FARM))
+    # 2026-11-20: the customer sees a code, the farm enters it, then the customer rates.
+    code = hh.q1("select pickup_code from store_orders where id = %(s)s", s=so["id"])["pickup_code"]
+    r.check("pickup, screens: the customer saw their code, and couldn't cancel",
+            maestro("customer_pickup_code.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD, FARM=UI_FARM, CODE=code))
+    r.check("pickup, screens: the farm refused a wrong code, then handed it over with the right one",
+            maestro("farmer_hand_over.yaml", EMAIL=UI_FARMER, PASSWORD=hh.PASSWORD, CUSTOMER="Autotest Customer 03", CODE=code))
+    r.check("pickup, database: handed over with the code",
+            hh.q1("select status, pickup_confirmed_by from store_orders where id = %(s)s", s=so["id"]) == {"status": "completed", "pickup_confirmed_by": "code"})
+    r.check("pickup and rating, screens: saw it picked up and rated 4 stars", maestro("customer_pickup_rate.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD, FARM=UI_FARM))
     time.sleep(2)
-    r.check("pickup and rating, database: completed", hh.q1("select status from store_orders where id = %(s)s", s=so["id"])["status"] == "completed")
     rating = hh.q1("select rating, comment from farmer_ratings where store_order_id = %(s)s", s=so["id"])
     r.check("pickup and rating, database: 4 stars", rating and rating["rating"] == 4, rating)
     r.check("pickup and rating, database: the comment was saved", rating and rating["comment"] == "Autotest: great peppers", rating)
@@ -175,11 +182,12 @@ def customer_cancel(r):
     cust = hh.User(customer_email(3))
     farm_a = hh.User(FARMS[0]["email"])
     oid, so = paid_order(cust, farm_a.id, [(products["ZZ Kale"]["id"], 1)])
-    total = hh.q1("select total::float as t from store_orders where id = %(s)s", s=so)["t"]
+    money = hh.q1("select total::float as t, service_fee::float as fee from store_orders where id = %(s)s", s=so)
+    back = round(money["t"] - money["fee"], 2)
     r.check("cancelling, screens: cancelled a paid order and saw it refunded", maestro("customer_cancel.yaml", EMAIL=cust.email, PASSWORD=hh.PASSWORD, FARM="ZZ Autotest Farm A"))
     refund = hh.q1("select amount::float as amount, stripe_refund_id from refunds where store_order_id = %(s)s", s=so)
-    r.check("cancelling, database: cancelled and refunded in full",
-            hh.q1("select status from store_orders where id = %(s)s", s=so)["status"] == "cancelled" and refund and refund["amount"] == total, refund)
+    r.check("cancelling, database: cancelled and refunded, less the service fee",
+            hh.q1("select status from store_orders where id = %(s)s", s=so)["status"] == "cancelled" and refund and refund["amount"] == back, (refund, back))
     if refund:
         r.check("cancelling, Stripe: the refund went through", stripe.Refund.retrieve(refund["stripe_refund_id"]).status in ("succeeded", "pending"))
 

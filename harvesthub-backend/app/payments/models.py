@@ -31,6 +31,8 @@ class Payment(Base):
     stripe_payment_method_id = Column(String, nullable=True)
     charge_attempts = Column(Integer, nullable=False, default=0)
     last_charge_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # What Stripe kept for itself (0042), filled in by the scheduled job.
+    stripe_fee = Column(Numeric(10, 2), nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -40,13 +42,33 @@ class Refund(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True)
     payment_id = Column(UUID(as_uuid=True), nullable=False)
-    store_order_id = Column(UUID(as_uuid=True), nullable=False)
+    # Empty only for a refund made in Stripe's Dashboard (source 'outside', 0042).
+    store_order_id = Column(UUID(as_uuid=True), nullable=True)
     amount = Column(Numeric(10, 2), nullable=False)
     reason = Column(String, nullable=True)
     stripe_refund_id = Column(String, nullable=True, unique=True)
     status = Column(String, nullable=False, default="pending")
+    source = Column(String, nullable=False, default="cancel")  # 'cancel' | 'problem' | 'outside' | 'late_payment'
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PaymentDispute(Base):
+    """A customer asked their bank for their money back (0042)."""
+
+    __tablename__ = "payment_disputes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    stripe_dispute_id = Column(String, nullable=False, unique=True)
+    stripe_charge_id = Column(String, nullable=True)
+    stripe_payment_intent_id = Column(String, nullable=True)
+    payment_id = Column(UUID(as_uuid=True), nullable=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    reason = Column(String, nullable=True)
+    status = Column(String, nullable=False)
+    evidence_due_by = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PaymentCancellation(Base):
