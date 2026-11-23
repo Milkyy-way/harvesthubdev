@@ -1021,6 +1021,7 @@ def _customer_actions(db: Session, so: StoreOrder, payment: Payment | None, sibl
                 "created_at": _iso(report.created_at),
                 "refund_amount": float(report.refund_amount) if report.refund_amount is not None else None,
                 "note": report.decision_note,
+                "photo_count": len(report.photo_paths or []),
             }
             if report
             else None

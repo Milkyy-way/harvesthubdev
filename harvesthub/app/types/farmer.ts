@@ -104,6 +104,7 @@ export interface EarningsBreakdown {
 export interface LedgerActivity {
   id: string;
   entry_type: 'order' | 'refund_adjustment' | 'cancellation_fee';
+  store_order_id?: string; // opens the order's statement
   created_at: string;
   customer_name: string | null;
   order_placed_at: string | null;
@@ -133,6 +134,67 @@ export interface FarmerPayout {
   status: 'pending_disbursement' | 'paid' | 'carried_forward';
   disbursed_at: string | null;
   carried_into_period_end: string | null;
+}
+
+// Transactions and statements (2026-11-22) —
+// harvesthub-backend/app/farmer_earnings/statements.py. The farm's own money
+// only: no customer card, email or home address, and not the service fee.
+export type TransactionKind = 'sale' | 'refund' | 'charge' | 'payout';
+export type TransactionFilter = 'all' | 'sales' | 'adjustments' | 'payouts';
+
+export interface FarmerTransaction {
+  id: string;
+  kind: TransactionKind;
+  at: string | null;
+  title: string;
+  detail: string;
+  amount: number; // negative = comes off the farm's money
+  store_order_id: string | null;
+  order_ref: string | null;
+  period_start: string; // the pay week (YYYY-MM-DD), for its weekly statement
+  payout_status: string | null;
+}
+
+export interface FarmerTransactions {
+  items: FarmerTransaction[];
+  next_before: string | null;
+}
+
+export interface PayoutState {
+  status: string; // open | pending | paid | settled | owed | carried
+  label: string;
+  paid_on: string | null;
+}
+
+export interface OrderStatementEntry {
+  kind: 'sale' | 'refund' | 'charge';
+  at: string | null;
+  lines: { label: string; amount: number }[];
+  net: number;
+  period_start: string;
+  period_end: string;
+  payout: PayoutState;
+}
+
+export interface OrderStatement {
+  store_order_id: string;
+  order_ref: string;
+  customer: string; // "First L."
+  placed_at: string | null;
+  finished_at: string | null;
+  what_happened: string;
+  fulfillment_method: 'pickup' | 'delivery';
+  payment_method: OrderPaymentMethod;
+  items: { name: string; unit: string; quantity: number; unit_price: number; line_total: number }[];
+  items_total: number;
+  promo_code: string | null;
+  promo_discount: number;
+  delivery_fee: number;
+  tax: number; // collected by HarvestHub, not the farm's
+  cash_total: number | null; // cash orders: what the customer paid at pickup
+  entries: OrderStatementEntry[];
+  net: number;
+  note: string | null;
 }
 
 // Farmer F7 — harvesthub-backend/app/farmer_ratings/schemas.py. No customer

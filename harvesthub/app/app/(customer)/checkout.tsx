@@ -251,6 +251,17 @@ export default function CheckoutScreen() {
             ) : null}
           </View>
         ) : null}
+
+        {preview && preview.groups.length > 0 ? (
+          <GoodToKnow
+            farmNames={preview.groups.map((g) => g.farm_name)}
+            pickup={preview.groups.some((g) => g.fulfillment_method === 'pickup')}
+            delivery={preview.groups.some((g) => g.fulfillment_method === 'delivery')}
+            cash={paymentMethod === 'cash_on_pickup'}
+            serviceFee={preview.groups.reduce((sum, g) => sum + g.service_fee, 0)}
+            podChargeAt={podGroup?.charge_at ?? null}
+          />
+        ) : null}
       </ScrollView>
 
       {preview && preview.groups.length > 0 ? (
@@ -261,23 +272,6 @@ export default function CheckoutScreen() {
             </Text>
             <Text style={styles.totalValue}>${preview.grand_total.toFixed(2)}</Text>
           </View>
-          {podGroup?.charge_at ? (
-            <View style={styles.notice}>
-              <MaterialIcons name="schedule" size={16} color={colors.textMuted} />
-              <Text style={styles.noticeText}>
-                <Text style={styles.noticeBold}>Nothing is charged now.</Text> Orders close{' '}
-                {new Date(podGroup.charge_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. The
-                delivery fee is then split among the members who ordered, and your saved card is charged once, for your exact total. You can
-                cancel for free until then.
-              </Text>
-            </View>
-          ) : null}
-          <PolicyNotice
-            pickup={preview.groups.some((g) => g.fulfillment_method === 'pickup')}
-            cash={paymentMethod === 'cash_on_pickup'}
-            serviceFee={preview.groups.reduce((sum, g) => sum + g.service_fee, 0)}
-          />
-          <ContactSharingNotice farmNames={preview.groups.map((g) => g.farm_name)} paymentMethod={paymentMethod} chargedAtCutoff={Boolean(podGroup)} />
           <Pressable
             style={[styles.placeOrderButton, !canPlaceOrder && styles.placeOrderButtonDisabled]}
             onPress={handlePlaceOrder}
@@ -291,67 +285,81 @@ export default function CheckoutScreen() {
               </Text>
             )}
           </Pressable>
+          <Text style={styles.agree}>
+            By ordering, you agree to the rules above and our{' '}
+            <Text style={styles.agreeLink} onPress={() => router.push('/(customer)/legal')}>
+              Terms
+            </Text>
+            .
+          </Text>
         </View>
       ) : null}
     </View>
   );
 }
 
-// Shown before the customer pays (decided with the user): exactly what is
-// shared with the farm and when. The backend only releases it to the farmer
-// once the order is fully placed — after a card payment succeeds, or at
-// placement for cash on pickup (store_orders.released_to_farmer_at, 0025).
-function ContactSharingNotice({
+// "Good to know" (2026-11-21, replacing two long notices in the fixed footer
+// that took a third of the screen): only what matters before paying, one short
+// line each, in the page rather than the footer. Agreed to by the line under
+// the button; it's what HarvestHub relies on if a payment is disputed:
+// - pickup within 3 hours of "ready" (the extra hour is offered later, when
+//   it's needed, not promised here);
+// - a missed card pickup isn't refunded, nor the service fee on a cancel;
+// - what the farm gets, and when. The backend only releases it once the
+//   order is placed: after a card payment succeeds, at placement for cash
+//   (store_orders.released_to_farmer_at, 0025).
+function GoodToKnow({
   farmNames,
-  paymentMethod,
-  chargedAtCutoff,
+  pickup,
+  delivery,
+  cash,
+  serviceFee,
+  podChargeAt,
 }: {
   farmNames: string[];
-  paymentMethod: OrderPaymentMethod | null;
-  chargedAtCutoff: boolean;
+  pickup: boolean;
+  delivery: boolean;
+  cash: boolean;
+  serviceFee: number;
+  podChargeAt: string | null;
 }) {
   const farms =
-    farmNames.length <= 1
-      ? farmNames[0] ?? 'the farm'
-      : `${farmNames.slice(0, -1).join(', ')} and ${farmNames[farmNames.length - 1]}`;
-  const when = chargedAtCutoff
-    ? 'only after your card is charged, when orders close'
-    : paymentMethod === 'card'
-      ? 'only after your payment goes through'
-      : paymentMethod === 'cash_on_pickup'
-        ? 'as soon as you place the order'
-        : 'only once your order is placed (after payment, for card orders)';
+    farmNames.length <= 1 ? farmNames[0] ?? 'The farm' : `${farmNames.slice(0, -1).join(', ')} and ${farmNames[farmNames.length - 1]}`;
+  const shared = delivery ? 'your name, phone and address' : 'your name and phone';
+  const when = podChargeAt ? 'when your card is charged' : cash ? 'when you place the order' : 'after you pay';
+  const noRefund = [
+    pickup && !cash ? "missed pickups aren't refunded" : null,
+    !cash && serviceFee > 0 ? "the service fee isn't refunded if you cancel" : null,
+  ].filter(Boolean) as string[];
+  const rows: { icon: React.ComponentProps<typeof MaterialIcons>['name']; text: string }[] = [
+    ...(podChargeAt
+      ? [
+          {
+            icon: 'schedule' as const,
+            text: `Nothing is charged now. When orders close (${new Date(podChargeAt).toLocaleString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            })}), the delivery fee is shared and your card is charged once. Free to cancel until then.`,
+          },
+        ]
+      : []),
+    ...(pickup ? [{ icon: 'storefront' as const, text: "Pick up within 3 hours once the farm says it's ready." }] : []),
+    ...(noRefund.length > 0
+      ? [{ icon: 'undo' as const, text: `${noRefund.join(', and ').replace(/^./, (c) => c.toUpperCase())}.` }]
+      : []),
+    { icon: 'person-outline' as const, text: `${farms} gets ${shared} ${when}.` },
+  ];
   return (
-    <View style={styles.notice}>
-      <MaterialIcons name="privacy-tip" size={16} color={colors.textMuted} />
-      <Text style={styles.noticeText}>
-        {farms} will receive your <Text style={styles.noticeBold}>full name and phone number</Text> (and, for delivery,
-        your address) so they can reach you about your order — {when}. Nothing else is shared.
-      </Text>
-    </View>
-  );
-}
-
-// Shown and agreed to before paying (2026-11-20): the service fee isn't
-// refunded on a cancel, and a pickup not collected in time isn't refunded.
-// It's what HarvestHub relies on if a customer later disputes the payment.
-function PolicyNotice({ pickup, cash, serviceFee }: { pickup: boolean; cash: boolean; serviceFee: number }) {
-  return (
-    <View style={styles.notice}>
-      <MaterialIcons name="info-outline" size={16} color={colors.textMuted} />
-      <Text style={styles.noticeText}>
-        {pickup ? (
-          <>
-            <Text style={styles.noticeBold}>Pickup: </Text>
-            when the farm says your order is ready, you get a 4-digit code and 3 hours to pick it up (you can add one hour, once).{' '}
-            {cash
-              ? 'Orders not picked up in time go back on sale, and after 2 you\'ll need to pay in the app. '
-              : 'Orders not picked up in time go back on sale and aren\'t refunded. '}
-          </>
-        ) : null}
-        {!cash && serviceFee > 0 ? `If you cancel, you get everything back except the service fee. ` : ''}
-        By placing this order you agree to these terms.
-      </Text>
+    <View style={styles.goodToKnow}>
+      <Text style={styles.goodToKnowTitle}>Good to know</Text>
+      {rows.map((row) => (
+        <View key={row.text} style={styles.goodToKnowRow}>
+          <MaterialIcons name={row.icon} size={16} color={colors.primary} />
+          <Text style={styles.goodToKnowText}>{row.text}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -435,9 +443,19 @@ const styles = StyleSheet.create({
   },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   totalLabel: { fontSize: 13, color: colors.textMuted },
-  notice: { flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginBottom: spacing.sm },
-  noticeText: { flex: 1, fontSize: 12, lineHeight: 17, color: colors.textMuted },
-  noticeBold: { fontWeight: '700', color: colors.text },
+  goodToKnow: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    backgroundColor: colors.tint,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: 6,
+  },
+  goodToKnowTitle: { fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 2 },
+  goodToKnowRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  goodToKnowText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.text },
+  agree: { fontSize: 11.5, color: colors.textMuted, textAlign: 'center', marginTop: spacing.sm },
+  agreeLink: { color: colors.primary, fontWeight: '600', textDecorationLine: 'underline' },
   totalValue: { fontSize: 20, fontWeight: '700', color: colors.text },
   placeOrderButton: {
     backgroundColor: colors.primary,

@@ -57,6 +57,7 @@ export interface ProblemInfo {
   created_at: string | null;
   refund_amount: number | null;
   note: string | null; // HarvestHub's note to the customer
+  photo_count?: number;
 }
 
 export interface StoreOrder {

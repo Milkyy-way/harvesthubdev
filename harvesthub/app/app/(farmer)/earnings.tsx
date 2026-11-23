@@ -1,11 +1,13 @@
 import { useCallback, useState } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/apiClient';
+import { apiErrorMessage } from '../../lib/apiError';
+import { openWeeklyStatement } from '../../lib/statements';
 import { formatDay, formatMoney, formatPeriod } from '../../lib/format';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { StatTile } from '../../components/customer/StatTile';
@@ -53,6 +55,21 @@ export default function FarmerEarningsScreen() {
     });
 
   const commissionPct = data ? Math.round(data.commission_rate * 100) : null;
+
+  // Transactions and statements (2026-11-22).
+  const openStatement = (storeOrderId: string) =>
+    router.push({ pathname: '/(farmer)/statement/[id]', params: { id: storeOrderId } });
+  const [openingWeek, setOpeningWeek] = useState<string | null>(null);
+  const openWeek = async (periodStart: string) => {
+    setOpeningWeek(periodStart);
+    try {
+      await openWeeklyStatement(periodStart);
+    } catch (err) {
+      Alert.alert("Couldn't open the statement", apiErrorMessage(err, 'Please try again.'));
+    } finally {
+      setOpeningWeek(null);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -111,8 +128,24 @@ export default function FarmerEarningsScreen() {
             </View>
           ) : null}
 
+          <Pressable style={styles.transactionsLink} onPress={() => router.push('/(farmer)/transactions')}>
+            <MaterialIcons name="receipt-long" size={20} color={colors.primary} />
+            <View style={styles.flex1}>
+              <Text style={styles.transactionsTitle}>Transactions</Text>
+              <Text style={styles.muted}>Every sale, refund, charge and payout, with statements to print or save</Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={22} color={colors.textMuted} />
+          </Pressable>
+
           {data.open_periods.map((period) => (
-            <OpenPeriodCard key={period.period_start} period={period} commissionPct={commissionPct} />
+            <OpenPeriodCard
+              key={period.period_start}
+              period={period}
+              commissionPct={commissionPct}
+              onOpenEntry={openStatement}
+              onOpenWeek={() => openWeek(period.period_start)}
+              openingWeek={openingWeek === period.period_start}
+            />
           ))}
 
           <Text style={styles.sectionTitle}>Payouts</Text>
@@ -128,6 +161,8 @@ export default function FarmerEarningsScreen() {
                 commissionPct={commissionPct}
                 expanded={expanded.has(payout.id)}
                 onToggle={() => togglePayout(payout.id)}
+                onOpenWeek={() => openWeek(payout.period_start)}
+                openingWeek={openingWeek === payout.period_start}
               />
             ))
           )}
@@ -141,6 +176,7 @@ export default function FarmerEarningsScreen() {
             <Bullet text="If you cancel an order a customer already paid for, they're refunded in full and the service fee comes off your payout. On a Harvest Pass order, which has no service fee, it's the 5% the fee would have been." />
             <Bullet text="If a card order isn't picked up in time, you're still paid for it, and its items go back on your products." />
             <Bullet text="If a customer reports a problem and we refund them, your share of the refunded items comes off your payout. HarvestHub gives back its commission on them." />
+            <Bullet text="Transactions lists every sale, refund, charge and payout. Tap one for its statement, or open a week's statement to print, save as a PDF, or download as a spreadsheet for your records." />
           </View>
         </ScrollView>
       )}
@@ -148,7 +184,19 @@ export default function FarmerEarningsScreen() {
   );
 }
 
-function OpenPeriodCard({ period, commissionPct }: { period: OpenPeriod; commissionPct: number | null }) {
+function OpenPeriodCard({
+  period,
+  commissionPct,
+  onOpenEntry,
+  onOpenWeek,
+  openingWeek,
+}: {
+  period: OpenPeriod;
+  commissionPct: number | null;
+  onOpenEntry: (storeOrderId: string) => void;
+  onOpenWeek: () => void;
+  openingWeek: boolean;
+}) {
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>{period.is_current_week ? 'This week' : 'Last week'}</Text>
@@ -163,15 +211,26 @@ function OpenPeriodCard({ period, commissionPct }: { period: OpenPeriod; commiss
       ) : (
         <View style={styles.entries}>
           {period.entries.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} />
+            <EntryRow key={entry.id} entry={entry} onPress={entry.store_order_id ? () => onOpenEntry(entry.store_order_id!) : undefined} />
           ))}
+          <WeekStatementLink onPress={onOpenWeek} busy={openingWeek} />
         </View>
       )}
     </View>
   );
 }
 
-function EntryRow({ entry }: { entry: LedgerActivity }) {
+function WeekStatementLink({ onPress, busy }: { onPress: () => void; busy: boolean }) {
+  return (
+    <Pressable style={styles.weekLink} onPress={onPress} disabled={busy} hitSlop={6}>
+      <MaterialIcons name="event-note" size={15} color={colors.primary} />
+      <Text style={styles.weekLinkText}>Weekly statement</Text>
+      {busy ? <ActivityIndicator size="small" color={colors.primary} /> : <MaterialIcons name="open-in-new" size={14} color={colors.primary} />}
+    </Pressable>
+  );
+}
+
+function EntryRow({ entry, onPress }: { entry: LedgerActivity; onPress?: () => void }) {
   const title =
     entry.entry_type === 'cancellation_fee'
       ? 'Cancellation fee'
@@ -186,7 +245,7 @@ function EntryRow({ entry }: { entry: LedgerActivity }) {
     entry.entry_type === 'cancellation_fee' ? 'remove-circle-outline' : entry.entry_type === 'refund_adjustment' ? 'undo' : 'shopping-bag';
 
   return (
-    <View style={styles.entryRow}>
+    <Pressable style={styles.entryRow} onPress={onPress} disabled={!onPress}>
       <MaterialIcons name={icon} size={18} color={colors.textMuted} />
       <View style={styles.flex1}>
         <Text style={styles.entryTitle} numberOfLines={1}>
@@ -195,7 +254,8 @@ function EntryRow({ entry }: { entry: LedgerActivity }) {
         {detail ? <Text style={styles.entryDetail}>{detail}</Text> : null}
       </View>
       <Text style={[styles.entryAmount, entry.net < 0 && styles.negative]}>{formatMoney(entry.net)}</Text>
-    </View>
+      {onPress ? <MaterialIcons name="chevron-right" size={18} color={colors.textMuted} /> : null}
+    </Pressable>
   );
 }
 
@@ -204,11 +264,15 @@ function PayoutRow({
   commissionPct,
   expanded,
   onToggle,
+  onOpenWeek,
+  openingWeek,
 }: {
   payout: FarmerPayout;
   commissionPct: number | null;
   expanded: boolean;
   onToggle: () => void;
+  onOpenWeek: () => void;
+  openingWeek: boolean;
 }) {
   const net = payout.breakdown.net;
   const status =
@@ -236,7 +300,12 @@ function PayoutRow({
         <Text style={[styles.payoutAmount, net < 0 && styles.negative]}>{formatMoney(net)}</Text>
         <MaterialIcons name={expanded ? 'expand-less' : 'expand-more'} size={22} color={colors.textMuted} />
       </View>
-      {expanded ? <Breakdown breakdown={payout.breakdown} commissionPct={commissionPct} netLabel="Payout" /> : null}
+      {expanded ? (
+        <>
+          <Breakdown breakdown={payout.breakdown} commissionPct={commissionPct} netLabel="Payout" />
+          <WeekStatementLink onPress={onOpenWeek} busy={openingWeek} />
+        </>
+      ) : null}
     </Pressable>
   );
 }
@@ -335,6 +404,19 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 11, fontWeight: '700' },
   payoutAmount: { fontSize: 16, fontWeight: '700', color: colors.text },
   bullet: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  transactionsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.tint,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  transactionsTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+  weekLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, alignSelf: 'flex-start' },
+  weekLinkText: { fontSize: 13, fontWeight: '700', color: colors.primary },
   bulletDot: { fontSize: 13, color: colors.textMuted, lineHeight: 19 },
   bulletText: { flex: 1, fontSize: 13, lineHeight: 19, color: colors.text },
 });

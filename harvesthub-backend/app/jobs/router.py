@@ -15,6 +15,7 @@ from app.ops import service as ops_service
 from app.orders import service as orders_service
 from app.pickup import service as pickup_service
 from app.pods import service as pods_service
+from app.problems import service as problems_service
 
 # Periodic work, run by Cloud Scheduler every 5 minutes (LAUNCH_ANDROID.md
 # step 5; it was 15 until the pickup reminders, 2026-11-20) — not the app. Authenticated by a shared secret (CRON_SECRET), and
@@ -46,6 +47,8 @@ def run_jobs(x_cron_secret: str | None = Header(None), db: Session = Depends(get
         # Photos of customers' doorsteps are kept 120 days (as long as a
         # customer's bank can take a dispute), then deleted.
         "delivery_photos_deleted": delivery_service.purge_old_photos(db),
+        # Photos on "Report a problem": the same 120 days.
+        "problem_photos_deleted": problems_service.purge_old_photos(db),
         # What Stripe kept on each payment.
         "stripe_fees_saved": ops_service.fill_stripe_fees(db),
         # Every morning: Stripe compared with the database, emailed to us.

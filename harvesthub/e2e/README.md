@@ -18,6 +18,7 @@ harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_pods.py           # N
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_deals.py          # group deals: goal met and missed, regular-price offer
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_account.py        # saved places, ratings, deleting an account, a pod pausing
 harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_pickup.py         # pickup codes, the extra hour, not picked up, report a problem, cash no-shows
+harvesthub-backend/venv/Scripts/python harvesthub/e2e/test_statements.py     # the farmer's Transactions, order statements, weekly statement link (after test_pickup)
 ```
 
 Each run prints PASS or FAIL per check and saves a copy in `results/`.

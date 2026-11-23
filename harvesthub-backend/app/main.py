@@ -12,6 +12,7 @@ from app.orders.router import router as orders_router
 from app.webhooks.router import router as webhooks_router
 from app.farmer_products.router import router as farmer_products_router
 from app.farmer_orders.router import router as farmer_orders_router
+from app.farmer_earnings.router import public_router as farmer_statements_router
 from app.farmer_earnings.router import router as farmer_earnings_router
 from app.farmer_ratings.router import router as farmer_ratings_router
 from app.promotions.router import router as farmer_promo_codes_router
@@ -68,6 +69,7 @@ app.include_router(deals_router, prefix="/api/v1")
 app.include_router(customer_deals_router, prefix="/api/v1")
 app.include_router(follow_router, prefix="/api/v1")
 app.include_router(legal_router)
+app.include_router(farmer_statements_router)
 
 @app.get("/health")
 def health():

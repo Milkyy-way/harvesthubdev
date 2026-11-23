@@ -131,7 +131,14 @@ def report_problem(
 ):
     # Report a problem: 24 hours after the handover, or after "not picked".
     return problems_service.create_report(
-        db, str(customer.id), order_id, store_order_id, payload.reason, payload.details, [i.model_dump() for i in payload.items]
+        db,
+        str(customer.id),
+        order_id,
+        store_order_id,
+        payload.reason,
+        payload.details,
+        [i.model_dump() for i in payload.items],
+        payload.photo_paths,
     )
 
 

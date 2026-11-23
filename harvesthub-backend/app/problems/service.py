@@ -11,15 +11,23 @@ farm. The decision is made with scripts/problems.py:
     (payouts_service.create_problem_adjustment). Card orders only;
   * decline, with a note to the customer;
   * handled: settled by hand (a cash order: there's no card to refund).
+
+Photos (0043, asked for 2026-11-21): up to 3, which the app uploads to the
+private problem-photos bucket, in the customer's own folder, before sending
+the report. HarvestHub sees them through signed links. They're deleted 120
+days after the report, like delivery photos.
 """
+import logging
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import stripe
 from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core import supabase_admin
 from app.core.models import Profile
 from app.core.pricing import FARMER_COMMISSION_RATE
 from app.notifications.service import notify
@@ -31,6 +39,14 @@ from app.payments.models import Payment, Refund
 from app.payouts import service as payouts_service
 from app.pickup.rules import REPORT_WINDOW
 from app.problems.models import ProblemReport
+
+logger = logging.getLogger(__name__)
+
+PHOTO_BUCKET = "problem-photos"
+MAX_PHOTOS = 3
+# As long as a bank dispute can come, like delivery photos.
+PHOTO_RETENTION = timedelta(days=120)
+_PHOTO_NAME = re.compile(r"[1-3]\.(jpg|jpeg|png|heic|webp)")
 
 REASONS = {
     "missing_item": "Something was missing",
@@ -50,8 +66,63 @@ def _aware(value):
     return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _check_photos(customer_id, so: StoreOrder, photo_paths: list[str] | None) -> list[str]:
+    """Only photos in the customer's own folder, for this order part:
+    {customer id}/{store order id}/{1..3}.{ext}."""
+    paths = list(dict.fromkeys(p.strip() for p in photo_paths or [] if p and p.strip()))
+    if len(paths) > MAX_PHOTOS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"You can add up to {MAX_PHOTOS} photos.")
+    prefix = f"{customer_id}/{so.id}/"
+    for path in paths:
+        if not path.startswith(prefix) or not _PHOTO_NAME.fullmatch(path[len(prefix):].lower()):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A photo wasn't uploaded for this order. Please add it again.")
+    return paths
+
+
+def photo_links(report: ProblemReport, expires_in: int) -> list[str]:
+    """Signed links to the report's photos (private bucket). A photo that
+    can't be signed is left out (and logged)."""
+    if not report.photo_paths or not supabase_admin.is_configured():
+        return []
+    links = []
+    for path in report.photo_paths:
+        try:
+            links.append(supabase_admin.create_signed_url(PHOTO_BUCKET, path, expires_in=expires_in))
+        except supabase_admin.SupabaseAdminError as e:
+            logger.warning("Could not sign problem photo %s: %s", path, e)
+    return links
+
+
+def purge_old_photos(db: Session, limit: int = 100) -> int:
+    """Scheduled job: problem photos are kept PHOTO_RETENTION (120 days)."""
+    reports = (
+        db.query(ProblemReport)
+        .filter(func.cardinality(ProblemReport.photo_paths) > 0, ProblemReport.created_at < _now() - PHOTO_RETENTION)
+        .limit(limit)
+        .all()
+    )
+    if not reports or not supabase_admin.is_configured():
+        return 0
+    try:
+        supabase_admin.delete_storage_paths(PHOTO_BUCKET, [p for r in reports for p in r.photo_paths])
+    except supabase_admin.SupabaseAdminError as e:
+        logger.warning("Could not delete old problem photos: %s", e)
+        return 0
+    for r in reports:
+        r.photo_paths = []
+    db.commit()
+    return len(reports)
+
+
 def create_report(
-    db: Session, customer_id: str, order_id: str, store_order_id: str, reason: str, details: str | None, items: list[dict]
+    db: Session,
+    customer_id: str,
+    order_id: str,
+    store_order_id: str,
+    reason: str,
+    details: str | None,
+    items: list[dict],
+    photo_paths: list[str] | None = None,
 ) -> dict:
     order = orders.get_owned_order(db, customer_id, order_id)
     so = db.query(StoreOrder).filter(StoreOrder.id == store_order_id, StoreOrder.order_id == order.id).first()
@@ -87,6 +158,8 @@ def create_report(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please check the items you chose.")
         chosen.append({"item_id": str(item.id), "product_name": item.product_name, "quantity": quantity})
 
+    photos = _check_photos(order.customer_id, so, photo_paths)
+
     report = ProblemReport(
         id=uuid.uuid4(),
         store_order_id=so.id,
@@ -94,6 +167,7 @@ def create_report(
         reason=reason,
         details=details,
         items=chosen,
+        photo_paths=photos,
         status="open",
     )
     db.add(report)
@@ -111,6 +185,11 @@ def create_report(
             f"What went wrong: {REASONS[reason]}",
             *(["Items: " + ", ".join(f"{c['quantity']} × {c['product_name']}" for c in chosen)] if chosen else []),
             *([f"They wrote: {details}"] if details else []),
+            *(
+                [f"Photos ({len(photos)}, links work for 7 days):", *(f"  {link}" for link in photo_links(report, 7 * 24 * 3600))]
+                if photos
+                else ["No photos."]
+            ),
             "",
             f"Order part: {'picked up/delivered' if so.status == 'completed' else 'not picked up'}, "
             f"{float(so.total):.2f} USD, paid {'in cash' if orders._is_cash(payment) else 'by card'}.",

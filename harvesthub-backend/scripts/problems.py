@@ -43,7 +43,8 @@ def cmd_list(db, _args) -> None:
         print("No open reports.")
     for r in reports:
         so = db.get(StoreOrder, r.store_order_id)
-        print(f"{r.id}  {r.created_at:%Y-%m-%d %H:%M}  {so.farm_name:<28}  {service.REASONS.get(r.reason, r.reason)}")
+        photos = f"  ({len(r.photo_paths)} photo{'s' if len(r.photo_paths) != 1 else ''})" if r.photo_paths else ""
+        print(f"{r.id}  {r.created_at:%Y-%m-%d %H:%M}  {so.farm_name:<28}  {service.REASONS.get(r.reason, r.reason)}{photos}")
 
 
 def cmd_show(db, args) -> None:
@@ -58,6 +59,15 @@ def cmd_show(db, args) -> None:
     print(f"What went wrong: {service.REASONS.get(r.reason, r.reason)}")
     if r.details:
         print(f"They wrote: {r.details}")
+    if r.photo_paths:
+        print(f"Photos ({len(r.photo_paths)}), links work for 1 hour:")
+        links = service.photo_links(r, 3600)
+        for link in links:
+            print(f"  {link}")
+        if len(links) < len(r.photo_paths):
+            print("  (some photos couldn't be opened: are SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY set?)")
+    else:
+        print("No photos.")
     print("Items on this part (id, quantity, name, price):")
     for item in db.query(StoreOrderItem).filter(StoreOrderItem.store_order_id == so.id):
         chosen = next((c["quantity"] for c in r.items or [] if c["item_id"] == str(item.id)), 0)

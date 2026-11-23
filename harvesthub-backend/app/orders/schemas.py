@@ -59,6 +59,7 @@ class ProblemOut(BaseModel):
     created_at: Optional[str] = None
     refund_amount: Optional[float] = None
     note: Optional[str] = None  # HarvestHub's note to the customer
+    photo_count: int = 0
 
 
 class StoreOrderOut(BaseModel):
@@ -177,6 +178,8 @@ class ProblemReportRequest(BaseModel):
     reason: Literal["missing_item", "damaged", "wrong_item", "quality", "farm_closed", "other"]
     details: Optional[str] = None
     items: list[ProblemItemIn] = []
+    # Uploaded first, to problem-photos/{customer id}/{store order id}/{1..3}.{ext} (0043).
+    photo_paths: list[str] = []
 
 
 class ReorderResponse(BaseModel):

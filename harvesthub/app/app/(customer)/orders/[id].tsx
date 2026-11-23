@@ -7,6 +7,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../../constants/theme';
 import { apiClient } from '../../../lib/apiClient';
 import { apiErrorMessage } from '../../../lib/apiError';
+import { uploadProblemPhoto } from '../../../lib/problemPhoto';
+import { useAuth } from '../../../contexts/AuthContext';
 import { discardCheckout, useOrderPayment } from '../../../lib/orderPayment';
 import { OrderStoreSection } from '../../../components/customer/OrderStoreSection';
 import { OrderPassNote } from '../../../components/customer/OrderPassNote';
@@ -26,6 +28,7 @@ export default function OrderDetailScreen() {
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [ratingStoreOrderId, setRatingStoreOrderId] = useState<string | null>(null);
   const [reporting, setReporting] = useState<StoreOrder | null>(null);
+  const { session } = useAuth();
   const [sendingReport, setSendingReport] = useState(false);
   const payForOrder = useOrderPayment();
   const [paying, setPaying] = useState(false);
@@ -133,11 +136,24 @@ export default function OrderDetailScreen() {
     }
   };
 
-  const sendReport = async (report: ProblemSubmission) => {
+  const sendReport = async ({ photos, ...report }: ProblemSubmission) => {
     if (!order || !reporting) return;
     setSendingReport(true);
     try {
-      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${reporting.id}/problem`, report);
+      // Photos go to the private bucket first; the report carries their paths.
+      const userId = session?.user.id;
+      let photoPaths: string[] = [];
+      if (photos.length > 0) {
+        if (!userId) throw new Error('Not signed in');
+        try {
+          photoPaths = await Promise.all(photos.map((photo, i) => uploadProblemPhoto(userId, reporting.id, i + 1, photo)));
+        } catch (err) {
+          console.warn('Could not upload problem photos:', err);
+          Alert.alert("Couldn't upload your photos", 'Please check your connection and try again, or remove the photos to send the report without them.');
+          return;
+        }
+      }
+      const res = await apiClient.post<Order>(`/orders/${order.id}/store/${reporting.id}/problem`, { ...report, photo_paths: photoPaths });
       setOrder(res.data);
       setReporting(null);
       Alert.alert('Report sent', "Thanks for telling us. We'll get back to you within 2 business days.");

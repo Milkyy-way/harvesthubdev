@@ -8,11 +8,14 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Alert,
   StyleSheet,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
+import { MAX_PROBLEM_PHOTOS, pickProblemPhoto, type ProblemPhoto } from '../../lib/problemPhoto';
 import { TagSelector } from '../TagSelector';
 import { TextField } from '../TextField';
 import type { ProblemReason, StoreOrder } from '../../types/orders';
@@ -30,6 +33,7 @@ export type ProblemSubmission = {
   reason: ProblemReason;
   details: string;
   items: { item_id: string; quantity: number }[];
+  photos: ProblemPhoto[]; // on the phone; the order screen uploads them first
 };
 
 type Props = {
@@ -47,6 +51,7 @@ export function ReportProblemSheet({ storeOrder, submitting, onClose, onSubmit }
   const [reason, setReason] = useState<ProblemReason | null>(null);
   const [details, setDetails] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [photos, setPhotos] = useState<ProblemPhoto[]>([]);
 
   const notPicked = storeOrder?.status === 'not_picked';
   const reasons = PROBLEM_REASONS.filter((r) => (notPicked ? r.value === 'farm_closed' || r.value === 'other' : r.value !== 'farm_closed'));
@@ -60,7 +65,26 @@ export function ReportProblemSheet({ storeOrder, submitting, onClose, onSubmit }
     setReason(null);
     setDetails('');
     setQuantities({});
+    setPhotos([]);
     onClose();
+  };
+
+  // Up to 3 photos (2026-11-21): optional, but they help HarvestHub decide.
+  const addPhoto = () => {
+    const take = async (source: 'camera' | 'library') => {
+      try {
+        const photo = await pickProblemPhoto(source);
+        if (photo) setPhotos((prev) => (prev.length < MAX_PROBLEM_PHOTOS ? [...prev, photo] : prev));
+      } catch (err) {
+        console.warn('Could not add a photo:', err);
+        Alert.alert("Couldn't add the photo", 'Please try again.');
+      }
+    };
+    Alert.alert('Add a photo', undefined, [
+      { text: 'Take a photo', onPress: () => take('camera') },
+      { text: 'Choose from library', onPress: () => take('library') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const step = (itemId: string, max: number, delta: number) =>
@@ -117,6 +141,34 @@ export function ReportProblemSheet({ storeOrder, submitting, onClose, onSubmit }
               </>
             ) : null}
 
+            {reason !== null && reason !== 'farm_closed' ? (
+              <>
+                <Text style={styles.label}>Photos (optional)</Text>
+                <View style={styles.photoRow}>
+                  {photos.map((photo, index) => (
+                    <View key={photo.uri} style={styles.photoBox}>
+                      <Image source={{ uri: photo.uri }} style={styles.photo} contentFit="cover" />
+                      <Pressable
+                        style={styles.photoRemove}
+                        onPress={() => setPhotos((prev) => prev.filter((_, i) => i !== index))}
+                        hitSlop={8}
+                        accessibilityLabel={`Remove photo ${index + 1}`}
+                      >
+                        <MaterialIcons name="close" size={14} color={colors.white} />
+                      </Pressable>
+                    </View>
+                  ))}
+                  {photos.length < MAX_PROBLEM_PHOTOS ? (
+                    <Pressable style={[styles.photoBox, styles.photoAdd]} onPress={addPhoto} accessibilityLabel="Add a photo">
+                      <MaterialIcons name="add-a-photo" size={22} color={colors.primary} />
+                      <Text style={styles.photoAddText}>Add</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <Text style={styles.hint}>A photo of the problem helps us sort it out faster. Only HarvestHub sees it.</Text>
+              </>
+            ) : null}
+
             <TextField
               label={reason === 'other' ? 'What happened?' : 'Anything else? (optional)'}
               placeholder="A few words help us sort it out quickly"
@@ -132,7 +184,10 @@ export function ReportProblemSheet({ storeOrder, submitting, onClose, onSubmit }
               </Pressable>
               <Pressable
                 style={[styles.confirmButton, !ready && styles.disabled]}
-                onPress={() => reason && onSubmit({ reason, details: details.trim(), items: itemsMatter ? chosen : [] })}
+                onPress={() =>
+                  reason &&
+                  onSubmit({ reason, details: details.trim(), items: itemsMatter ? chosen : [], photos: reason === 'farm_closed' ? [] : photos })
+                }
                 disabled={!ready || submitting}
               >
                 {submitting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.confirmText}>Send report</Text>}
@@ -172,6 +227,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   qty: { width: 22, textAlign: 'center', fontSize: 15, fontWeight: '700', color: colors.text },
+  photoRow: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
+  photoBox: { width: 72, height: 72, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.tint },
+  photo: { width: '100%', height: '100%' },
+  photoRemove: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoAdd: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed' },
+  photoAddText: { fontSize: 11.5, fontWeight: '600', color: colors.primary, marginTop: 2 },
+  hint: { fontSize: 12, lineHeight: 17, color: colors.textMuted, marginTop: spacing.xs, marginBottom: spacing.sm },
   actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   keepButton: {
     flex: 1,

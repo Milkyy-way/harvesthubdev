@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Numeric, String, TIMESTAMP
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from app.core.database import Base
 
 
@@ -17,6 +17,8 @@ class ProblemReport(Base):
     reason = Column(String, nullable=False)
     details = Column(String, nullable=True)
     items = Column(JSONB, nullable=False, default=list)  # [{"item_id", "product_name", "quantity"}]
+    # Up to 3 photos in the private problem-photos bucket (0043).
+    photo_paths = Column(ARRAY(String), nullable=False, default=list)
     status = Column(String, nullable=False, default="open")  # 'open' | 'refunded' | 'declined' | 'handled'
     refund_amount = Column(Numeric(10, 2), nullable=True)
     decision_note = Column(String, nullable=True)

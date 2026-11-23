@@ -287,7 +287,10 @@ export function OrderStoreSection({
       ) : null}
       {problem ? (
         <View style={styles.problemCard}>
-          <Text style={styles.problemTitle}>You reported: {problemLabel}</Text>
+          <Text style={styles.problemTitle}>
+            You reported: {problemLabel}
+            {problem.photo_count ? ` · ${problem.photo_count} photo${problem.photo_count === 1 ? '' : 's'}` : ''}
+          </Text>
           <Text style={styles.problemText}>
             {problem.status === 'open'
               ? "We're looking into it and will get back to you within 2 business days."

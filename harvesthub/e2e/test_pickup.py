@@ -7,7 +7,8 @@
    stock goes back, the farm is still paid (ledger entry), nothing is refunded,
    and both sides are told. The customer turns up late: the farm enters the
    code, the stock is taken again.
-2. Report a problem on that order: it's recorded and HarvestHub is alerted.
+2. Report a problem on another order, with a photo (0043): it's recorded and
+   HarvestHub is alerted. Another customer can't put a photo in that folder.
    HarvestHub refunds one item with the refund tool's code: Stripe refunds that
    item, and the farm's share comes off its payout.
 3. Cash pickups missed twice: no ledger entries, the customer is asked "did you
@@ -18,6 +19,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
+import requests
 import stripe
 
 import hh
@@ -100,9 +102,40 @@ farm["A"].post(f"/farmers/me/orders/{so2['id']}/ready")
 farm["A"].post(f"/farmers/me/orders/{so2['id']}/handover", {"code": pickup_code(cust, order2, so2["id"])})
 shown = cust.get(f"/orders/{order2}")["store_orders"][0]
 tomatoes = next(i for i in shown["items"] if i["product_name"] == "ZZ Tomatoes")
-cust.post(f"/orders/{order2}/store/{so2['id']}/problem", {"reason": "damaged", "details": "Autotest: one was squashed", "items": [{"item_id": tomatoes["id"], "quantity": 1}]})
-report = hh.q1("select id::text, status from problem_reports where store_order_id = %(s)s", s=so2["id"])
-r.check("the report was recorded", report and report["status"] == "open", report)
+# Stand-in photo bytes (Storage checks the type, not the picture), uploaded the
+# way the app does: into the customer's own folder.
+JPEG = b"\xff\xd8\xff\xe0" + bytes(16) + b"\xff\xd9"
+
+
+def upload_photo(user, path):
+    return requests.post(
+        f"{hh.SUPABASE}/storage/v1/object/problem-photos/{path}",
+        headers={"apikey": hh.ANON_KEY, "Authorization": f"Bearer {user.token}", "Content-Type": "image/jpeg", "x-upsert": "true"},
+        data=JPEG,
+        timeout=30,
+    )
+
+
+photo_path = f"{cust.id}/{so2['id']}/1.jpg"
+up = upload_photo(cust, photo_path)
+r.check("the customer can upload a photo to their own folder", up.status_code in (200, 201), up.text[:200])
+stranger = hh.User(customer_email(7))
+sneak = upload_photo(stranger, f"{cust.id}/{so2['id']}/2.jpg")
+r.check("another customer can't put a photo in that folder", sneak.status_code >= 400, sneak.status_code)
+try:
+    cust.post(f"/orders/{order2}/store/{so2['id']}/problem", {"reason": "damaged", "items": [], "photo_paths": [f"{stranger.id}/{so2['id']}/1.jpg"]})
+    r.check("a photo from someone else's folder is refused", False, "it was accepted")
+except hh.ApiError as e:
+    r.check("a photo from someone else's folder is refused", e.status == 400, e)
+cust.post(f"/orders/{order2}/store/{so2['id']}/problem", {
+    "reason": "damaged", "details": "Autotest: one was squashed",
+    "items": [{"item_id": tomatoes["id"], "quantity": 1}], "photo_paths": [photo_path],
+})
+report = hh.q1("select id::text, status, photo_paths from problem_reports where store_order_id = %(s)s", s=so2["id"])
+r.check("the report was recorded, with its photo", report and report["status"] == "open" and report["photo_paths"] == [photo_path], report)
+r.check("the customer sees it was sent with 1 photo", cust.get(f"/orders/{order2}")["store_orders"][0]["problem"]["photo_count"] == 1)
+alert_body = hh.q1("select body from ops_alerts where dedupe_key = %(k)s", k=f"problem:{report['id']}")
+r.check("HarvestHub's alert links the photo", alert_body and "/storage/v1/object/sign/problem-photos/" in alert_body["body"])
 r.check("HarvestHub was alerted", hh.q1("select count(*) as n from ops_alerts where dedupe_key = %(k)s", k=f"problem:{report['id']}")["n"] == 1)
 try:
     cust.post(f"/orders/{order2}/store/{so2['id']}/problem", {"reason": "quality", "items": []})

@@ -60,6 +60,7 @@ def _activity(db: Session, entries: list[LedgerEntry]) -> list[dict]:
             {
                 "id": str(e.id),
                 "entry_type": e.entry_type,
+                "store_order_id": str(e.store_order_id),
                 "created_at": e.created_at.isoformat(),
                 "customer_name": name,
                 "order_placed_at": placed_at.isoformat() if placed_at else None,

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # Every user's files live under a folder named after their user id
 # (0006 and 0009's storage policies enforce that).
-_USER_BUCKETS = ("farmer-verification-docs", "farmer-photos", "delivery-photos")
+_USER_BUCKETS = ("farmer-verification-docs", "farmer-photos", "delivery-photos", "problem-photos")
 
 # Store orders the other side is still acting on — the same set the
 # farmer's Orders tab treats as active, limited to released orders
