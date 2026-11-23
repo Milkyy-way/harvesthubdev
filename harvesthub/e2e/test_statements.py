@@ -7,6 +7,8 @@ refund and charges). Read-only: it changes nothing.
 3. The weekly statement link: the page and the spreadsheet open without the
    app's sign-in; a changed link doesn't.
 """
+import re
+
 import requests
 
 import hh
@@ -25,8 +27,10 @@ sales = farm["A"].get("/farmers/me/earnings/transactions", params={"kind": "sale
 r.check("Sales shows only sales", sales and all(x["kind"] == "sale" for x in sales))
 adj = farm["A"].get("/farmers/me/earnings/transactions", params={"kind": "adjustments"})["items"]
 r.check("Refunds & charges shows only those", all(x["kind"] in ("refund", "charge") for x in adj))
-r.check("customers show as First L.", all(x["title"].split(" · ")[0].endswith(".") or x["kind"] != "sale" for x in rows[:20]),
-        [x["title"] for x in rows[:5]])
+# "First L." (test accounts are "Autotest Customer 06", so "Autotest 0."), or
+# "A customer" once that customer has deleted their account.
+names = [x["title"].split(" · ")[0] for x in sales[:20]]
+r.check("customers show as First L. (or A customer)", all(re.fullmatch(r"\S+ \S\.|\S+|A customer", n) for n in names), names[:5])
 
 print("\n== 2. An order's statement")
 sale = sales[0]
