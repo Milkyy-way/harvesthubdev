@@ -194,6 +194,9 @@ except hh.ApiError as e:
 card = cust7.post("/orders", {"groups": [{"farmer_id": farm["C"].id, "fulfillment_method": "pickup"}], "payment_method": "card"})
 r.check("paying in the app still works", bool(card["client_secret"]))
 cust7.post(f"/orders/{card['order']['id']}/discard")
+# Don't leave customer 7 card-only: other suites (test_account) pay them in cash.
+hh.q("update store_orders so set collected_answer = 'yes' from orders o where o.id = so.order_id and o.customer_id = %(c)s "
+     "and so.status = 'not_picked' and so.farm_name like 'ZZ Autotest%%'", c=cust7.id)
 
 # --- 4. Ready from a later time ------------------------------------------------------------------------
 print("\n== 4. Ready from a later time")

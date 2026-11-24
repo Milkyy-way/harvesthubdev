@@ -77,6 +77,10 @@ r.check("places can be deleted", c6.get("/customers/me/places")["places"] == [])
 # --- Ratings ------------------------------------------------------------------------------
 print("\n== Ratings")
 c7 = hh.User(customer_email(7))
+# test_pickup makes customer 7 miss 2 cash pickups (card only after that);
+# those test rows don't count here, so this cash order is allowed.
+hh.q("update store_orders so set collected_answer = 'yes' from orders o where o.id = so.order_id and o.customer_id = %(c)s "
+     "and so.status = 'not_picked' and so.farm_name like 'ZZ Autotest%%'", c=c7.id)
 oid, so = place_order(c7, farm_c, [("ZZ Honey", 1)])
 expect_refused("an order not yet picked up can't be rated",
                lambda: c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 5}), 409, "completed")
