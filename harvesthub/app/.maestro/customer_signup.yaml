@@ -57,7 +57,9 @@ appId: com.harvesthubmarket.app
     timeout: 60000
 - assertVisible: "Your first 30 days of Harvest Pass are free"
 - tapOn: "Not now"
+# Home's first screen since 2026-11-14: the heading, then the Pass card.
 - extendedWaitUntil:
-    visible: "Farmer spotlights"
+    visible: "What's fresh near.*"
     timeout: 30000
+- assertVisible: "Start free month"
 - takeScreenshot: customer_signup_done

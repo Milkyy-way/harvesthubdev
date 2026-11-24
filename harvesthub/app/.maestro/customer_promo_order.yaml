@@ -61,10 +61,14 @@ appId: com.harvesthubmarket.app
 
 - tapOn: "Card or Google Pay"
 - tapOn: "Place Order"
+# Stripe's sheet may open on a list of ways to pay ("Card") or, as on
+# 2026-11-23, straight on the card form.
 - extendedWaitUntil:
-    visible: "Card"
+    visible: "Card( number)?"
     timeout: 20000
-- tapOn: "Card"
+- tapOn:
+    text: "Card"
+    optional: true
 - tapOn: "Card number"
 - inputText: "4242424242424242"
 - inputText: "1234"

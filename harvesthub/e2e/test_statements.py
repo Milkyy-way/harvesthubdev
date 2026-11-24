@@ -31,6 +31,13 @@ r.check("Refunds & charges shows only those", all(x["kind"] in ("refund", "charg
 # "A customer" once that customer has deleted their account.
 names = [x["title"].split(" · ")[0] for x in sales[:20]]
 r.check("customers show as First L. (or A customer)", all(re.fullmatch(r"\S+ \S\.|\S+|A customer", n) for n in names), names[:5])
+# Fix list 27: a cash sale says "you collected $3.50".
+cash = [x["detail"] for x in sales if "you collected" in x.get("detail", "")]
+r.check("cash sales show the amount collected with a $", all("you collected $" in d for d in cash), cash[:3])
+# Fix list 29: Earnings uses the same names as Transactions.
+earned = farm["A"].get("/farmers/me/earnings")
+activity = [a["customer_name"] for w in earned.get("open_periods", []) for a in w.get("entries", [])]
+r.check("Earnings shows customers as First L. too", all(re.fullmatch(r"\S+ \S\.|\S+|A customer", n or "") for n in activity), activity[:5])
 
 print("\n== 2. An order's statement")
 sale = sales[0]
@@ -49,6 +56,10 @@ link = farm["A"].post(f"/farmers/me/earnings/statements/{sale['period_start']}/l
 page = requests.get(ORIGIN + link["path"], timeout=30)
 r.check("the page opens from the link, without signing in", page.status_code == 200 and "Weekly statement" in page.text, page.status_code)
 r.check("no service fee or card details on it", "service fee" not in page.text.lower())
+# Fix list 30: refunds get their own line in the summary.
+week_refunds = [x for x in adj if x["kind"] == "refund" and x.get("period_start") == sale["period_start"]]
+r.check("the summary has a Refunds line when the week has refunds",
+        ("Refunds (your share)" in page.text) == bool(week_refunds), len(week_refunds))
 sheet = requests.get(ORIGIN + link["path"] + "/csv", timeout=30)
 r.check("the spreadsheet downloads", sheet.status_code == 200 and "Sales after promo" in sheet.text, sheet.status_code)
 token = link["path"].rsplit("/", 1)[1]

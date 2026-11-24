@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -86,7 +85,7 @@ export default function DeleteAccountScreen() {
     : 'Records of your past orders and payments (amounts, dates, and items, without your name, phone, or address), because tax and accounting laws require them. If you used a free month, an unreadable scrambled version of your email and phone, so they can\'t get another one.';
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>
+    <KeyboardAvoidingView behavior="padding" style={styles.flex1}>
       <View style={styles.container}>
         <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
           <Pressable style={styles.back} onPress={() => router.back()} hitSlop={12} disabled={deleting}>

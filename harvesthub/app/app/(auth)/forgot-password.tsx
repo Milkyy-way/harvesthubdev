@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -44,7 +44,7 @@ export default function ForgotPassword() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>
+    <KeyboardAvoidingView behavior="padding" style={styles.flex1}>
       <View style={[styles.container, { paddingTop: insets.top + spacing.md }]}>
         <Pressable style={styles.back} onPress={() => router.back()} hitSlop={12}>
           <MaterialIcons name="arrow-back" size={22} color={colors.text} />

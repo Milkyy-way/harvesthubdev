@@ -115,7 +115,7 @@ export default function FarmerEarningsScreen() {
               icon="inventory-2"
               label="In progress"
               value={`~${formatMoney(data.in_progress.estimated_earnings)}`}
-              caption={`${data.in_progress.order_count} order${data.in_progress.order_count === 1 ? '' : 's'} not picked up`}
+              caption={`${data.in_progress.order_count} order${data.in_progress.order_count === 1 ? '' : 's'} still open`}
             />
           </View>
 
@@ -231,12 +231,15 @@ function WeekStatementLink({ onPress, busy }: { onPress: () => void; busy: boole
 }
 
 function EntryRow({ entry, onPress }: { entry: LedgerActivity; onPress?: () => void }) {
+  // The same words as Transactions and the statements (fix list 29); the
+  // customer comes as "First L.", or "A customer" once they've left.
+  const customer = entry.customer_name ?? 'A customer';
   const title =
     entry.entry_type === 'cancellation_fee'
-      ? 'Cancellation fee'
+      ? `Cancellation charge · ${customer}`
       : entry.entry_type === 'refund_adjustment'
-        ? 'Refund after payout'
-        : `${entry.customer_name ?? 'Order'} · ${entry.item_count} item${entry.item_count === 1 ? '' : 's'}`;
+        ? `Refund · ${customer}`
+        : `${customer} · ${entry.item_count} item${entry.item_count === 1 ? '' : 's'}`;
   const placed = entry.order_placed_at ? new Date(entry.order_placed_at).toLocaleDateString() : null;
   const detail = [placed, entry.payment_method === 'cash_on_pickup' ? 'cash' : entry.payment_method === 'card' ? 'card' : null]
     .filter(Boolean)
@@ -325,7 +328,7 @@ function Breakdown({
       <Line label={`HarvestHub commission${commissionPct != null ? ` (${commissionPct}%)` : ''}`} value={formatMoney(-b.commission)} />
       <Line label="Your earnings" value={formatMoney(b.earnings)} bold />
       {b.cash_collected > 0 ? <Line label="Cash you collected at pickup" value={formatMoney(-b.cash_collected)} /> : null}
-      {b.fees > 0 ? <Line label="Cancellation fees" value={formatMoney(-b.fees)} /> : null}
+      {b.fees > 0 ? <Line label="Cancellation charges" value={formatMoney(-b.fees)} /> : null}
       {b.carried_in < 0 ? <Line label="Owed from earlier weeks" value={formatMoney(b.carried_in)} /> : null}
       <View style={styles.divider} />
       <Line label={b.net < 0 ? 'You owe' : netLabel} value={formatMoney(Math.abs(b.net))} bold negative={b.net < 0} />

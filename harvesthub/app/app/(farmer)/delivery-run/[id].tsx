@@ -10,7 +10,6 @@ import {
   Linking,
   Modal,
   KeyboardAvoidingView,
-  Platform,
   StyleSheet,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -459,7 +458,7 @@ function DeliveredSheet({
 
   return (
     <Modal visible={!!stop} transparent animationType="slide" onRequestClose={close}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
+      <KeyboardAvoidingView behavior="padding" style={styles.backdrop}>
         <Pressable style={styles.flex1} onPress={close} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
           <Text style={styles.sheetTitle}>

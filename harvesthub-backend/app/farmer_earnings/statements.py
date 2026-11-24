@@ -184,7 +184,7 @@ def _entry_row(e: LedgerEntry, ctx: dict | None) -> dict:
         kind, title = "sale", f"{name} · {n} item{'' if n == 1 else 's'}"
         detail = f"{_what_happened(ctx)} · {_payment_word(ctx)}" if ctx else "Sale"
         if ctx and ctx["method"] == "cash_on_pickup":
-            detail += f" · you collected {_money(e.cash_collected):.2f}"
+            detail += f" · you collected ${_money(e.cash_collected):.2f}"
     elif e.entry_type == "refund_adjustment":
         kind, title, detail = "refund", f"Refund · {name}", _refund_detail(ctx)
     else:
@@ -462,10 +462,14 @@ def weekly_statement(db: Session, farmer_id: str, period_start: date) -> dict:
             }
         )
 
-    def total(key):
-        return round(sum(r[key] for r in rows), 2)
+    def total(key, kind=None):
+        return round(sum(r[key] for r in rows if kind is None or r["type"] == kind), 2)
 
     carried_in = _money(payout.carried_in_total) if payout else 0.0
+    # The summary shows refunds on their own line (fix list 30): sales and
+    # commission come from the sales alone, and "Refunds (your share)" is what
+    # refunds took off the farm's sales less the commission given back. The
+    # spreadsheet's Totals row stays the plain sum of each column.
     return {
         "farm_name": farm.farm_name if farm else "",
         "farm_address": ", ".join(
@@ -479,14 +483,16 @@ def weekly_statement(db: Session, farmer_id: str, period_start: date) -> dict:
         "payout": _payout_state(payout),
         "rows": rows,
         "totals": {
-            "sales": total("sales"),
+            "sales": total("sales", "Sale"),
             "delivery_fee": total("delivery_fee"),
-            "commission": total("commission"),
+            "commission": total("commission", "Sale"),
+            "refunds": round(total("sales", "Refund") + total("delivery_fee", "Refund") + total("commission", "Refund"), 2),
             "cash_collected": total("cash_collected"),
             "charges": total("charges"),
             "tax": total("tax"),
             "carried_in": carried_in,
             "net": round(total("net") + carried_in, 2),
+            "columns": {k: total(k) for k in ("sales", "delivery_fee", "commission", "cash_collected", "charges", "net", "tax")},
         },
         "generated_at": datetime.now(LOCAL_TZ).strftime("%b %d, %Y %I:%M %p").replace(" 0", " "),
     }
@@ -518,9 +524,10 @@ def statement_csv(s: dict) -> str:
     for r in s["rows"]:
         w.writerow([f"{r[k]:.2f}" if isinstance(r[k], float) else r[k] for k, _ in _CSV_COLUMNS])
     t = s["totals"]
+    c = t["columns"]
     w.writerow([])
-    w.writerow(["Totals", "", "", "", "", "", f"{t['sales']:.2f}", f"{t['delivery_fee']:.2f}", f"{t['commission']:.2f}",
-                f"{t['cash_collected']:.2f}", f"{t['charges']:.2f}", f"{round(t['net'] - t['carried_in'], 2):.2f}", f"{t['tax']:.2f}"])
+    w.writerow(["Totals", "", "", "", "", "", f"{c['sales']:.2f}", f"{c['delivery_fee']:.2f}", f"{c['commission']:.2f}",
+                f"{c['cash_collected']:.2f}", f"{c['charges']:.2f}", f"{c['net']:.2f}", f"{c['tax']:.2f}"])
     if t["carried_in"]:
         w.writerow(["Owed from earlier weeks", "", "", "", "", "", "", "", "", "", "", f"{t['carried_in']:.2f}"])
     w.writerow(["Payout for the week", "", "", "", "", "", "", "", "", "", "", f"{t['net']:.2f}"])
@@ -548,6 +555,8 @@ def statement_html(s: dict, token: str) -> str:
     if t["delivery_fee"]:
         summary.append(("Delivery fees (yours to keep)", t["delivery_fee"]))
     summary.append(("HarvestHub commission", t["commission"]))
+    if t["refunds"]:
+        summary.append(("Refunds (your share)", t["refunds"]))
     if t["cash_collected"]:
         summary.append(("Cash you collected at pickup", t["cash_collected"]))
     if t["charges"]:
@@ -599,7 +608,8 @@ def statement_html(s: dict, token: str) -> str:
   <table>{rows_html}</table>
   <div class="notes sub">
     <p>Sales tax on these orders: {_m(t['tax'])}. HarvestHub collects it; it isn't part of your sales or your payout.{' For cash orders you collected it at pickup, so it is part of what you owe.' if t['cash_collected'] else ''}</p>
-    <p>The commission is HarvestHub's share of your sales after your promo discounts. Delivery fees aren't charged commission.</p>
+    <p>The commission is HarvestHub's share of your sales after your promo discounts. Delivery fees aren't charged commission.</p>{'''
+    <p>Refunds (your share): what refunds took off your sales, less the commission HarvestHub gave back on them.</p>''' if t['refunds'] else ''}
     <p>Made {e(s['generated_at'])}. Questions: {e(settings.SUPPORT_EMAIL)}</p>
   </div>
 </main></body></html>"""

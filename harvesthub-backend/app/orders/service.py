@@ -191,6 +191,7 @@ def build_order_out(db: Session, order_id) -> dict:
                 "farm_name": so.farm_name,
                 "photo_url": photo_by_farmer.get(so.farmer_id),
                 "my_rating": rating.rating if rating else None,
+                "my_rating_comment": (rating.comment or None) if rating else None,
                 "fulfillment_method": so.fulfillment_method,
                 "pickup_address_street": None if unfinished else so.pickup_address_street,
                 "pickup_address_city": so.pickup_address_city,

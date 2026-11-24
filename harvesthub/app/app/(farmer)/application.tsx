@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   ScrollView,
   KeyboardAvoidingView,
-  Platform,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -312,7 +311,7 @@ export default function FarmerApplication() {
   return (
     // A solid strip under the status bar, so the form doesn't scroll under the clock.
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
       style={[styles.flex1, styles.screen, { paddingTop: insets.top }]}
     >
       <ScrollView

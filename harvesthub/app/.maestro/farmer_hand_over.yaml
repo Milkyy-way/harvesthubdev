@@ -21,8 +21,9 @@ appId: com.harvesthubmarket.app
 - extendedWaitUntil:
     visible: "That code doesn.t match\\..*"
     timeout: 15000
+# A wrong code empties the box (fix list 26), so the right one is typed fresh.
+# The sheet sits above the keyboard on Android now (item 25): no hideKeyboard.
 - tapOn: "Pickup code"
-- eraseText: 4
 - inputText: ${CODE}
 - tapOn: "Hand over"
 - extendedWaitUntil:

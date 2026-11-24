@@ -7,7 +7,6 @@ import {
   Switch,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   StyleSheet,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -188,7 +187,7 @@ export default function ProductEditor() {
   const previewUri = photo?.uri ?? imageUrl;
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>
+    <KeyboardAvoidingView behavior="padding" style={styles.flex1}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <Pressable style={styles.back} onPress={() => router.back()} hitSlop={12}>
           <MaterialIcons name="arrow-back" size={22} color={colors.text} />

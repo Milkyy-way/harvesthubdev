@@ -86,6 +86,12 @@ c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 3, "comment": "Autotest: 
 c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 5, "comment": "Autotest: great honey"})
 rows = hh.q("select rating, comment from farmer_ratings where store_order_id = %(s)s", s=so)
 r.check("rating again revises it, no duplicate", len(rows) == 1 and rows[0]["rating"] == 5, rows)
+# Fix list 31: the order shows the customer the comment they sent, and new
+# stars alone keep it.
+c7.post(f"/orders/{oid}/store/{so}/rating", {"rating": 4})
+mine_so = next(x for x in c7.get(f"/orders/{oid}")["store_orders"] if x["id"] == so)
+r.check("the order shows the customer their comment, kept when only the stars change",
+        (mine_so["my_rating"], mine_so.get("my_rating_comment")) == (4, "Autotest: great honey"), (mine_so["my_rating"], mine_so.get("my_rating_comment")))
 mine = farm_c.get("/farmers/me/ratings")
 r.check("the farmer sees the rating and comment", any(x.get("comment") == "Autotest: great honey" for x in mine.get("ratings", mine.get("items", []))) or mine.get("count", 0) >= 1, mine)
 spot = {f["farm_name"]: f for f in c7.get("/farmers/spotlight", params={"limit": 20})["items"]}

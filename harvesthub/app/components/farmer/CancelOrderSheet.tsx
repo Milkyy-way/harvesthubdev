@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal, View, Text, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { Modal, View, Text, Pressable, ActivityIndicator, KeyboardAvoidingView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { TagSelector } from '../TagSelector';
@@ -53,7 +53,7 @@ export function CancelOrderSheet({ order, submitting, onClose, onConfirm, delive
 
   return (
     <Modal visible={!!order} transparent animationType="slide" onRequestClose={close}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
+      <KeyboardAvoidingView behavior="padding" style={styles.backdrop}>
         <Pressable style={styles.flex1} onPress={close} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
           <Text style={styles.title}>{delivery ? "Couldn't deliver?" : 'Cancel this order?'}</Text>

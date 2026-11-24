@@ -95,6 +95,7 @@ class StoreOrderOut(BaseModel):
     cancellation_reason: Optional[str]
     items: list[OrderItemOut]
     my_rating: Optional[int]
+    my_rating_comment: Optional[str] = None  # shown back to the customer (fix list 31)
     delivery: Optional[DeliveryProgressOut] = None  # delivery orders only
     # What the customer can do now (app/orders/service.py::cancel_terms):
     # cancel, and what would come back; or why not.

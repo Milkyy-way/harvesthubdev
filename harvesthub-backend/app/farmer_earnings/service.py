@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.models import Profile
 from app.core.pricing import FARMER_COMMISSION_RATE
+from app.farmer_earnings.statements import short_name
 from app.orders.models import Order, StoreOrder, StoreOrderItem
 from app.payments.models import Payment
 from app.payouts.models import LedgerEntry, Payout
@@ -33,14 +34,16 @@ def _breakdown(gross, commission, cash, fees, carried_in, net) -> dict:
 
 def _activity(db: Session, entries: list[LedgerEntry]) -> list[dict]:
     """Ledger entries with enough order context for a farmer to recognize
-    them (customer, when it was placed, how many items, card vs cash)."""
+    them (customer, when it was placed, how many items, card vs cash). The
+    customer is "First L." as on the statements, or "A customer" once they've
+    deleted their account (fix list 29)."""
     store_order_ids = {e.store_order_id for e in entries}
     if not store_order_ids:
         return []
     order_rows = (
         db.query(StoreOrder.id, Order.placed_at, Profile.full_name, Payment.payment_method)
         .join(Order, Order.id == StoreOrder.order_id)
-        .join(Profile, Profile.id == Order.customer_id)
+        .outerjoin(Profile, Profile.id == Order.customer_id)
         .outerjoin(Payment, Payment.order_id == Order.id)
         .filter(StoreOrder.id.in_(store_order_ids))
         .all()
@@ -62,7 +65,7 @@ def _activity(db: Session, entries: list[LedgerEntry]) -> list[dict]:
                 "entry_type": e.entry_type,
                 "store_order_id": str(e.store_order_id),
                 "created_at": e.created_at.isoformat(),
-                "customer_name": name,
+                "customer_name": short_name(name),
                 "order_placed_at": placed_at.isoformat() if placed_at else None,
                 "item_count": int(item_counts.get(e.store_order_id) or 0),
                 "payment_method": method,

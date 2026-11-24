@@ -8,7 +8,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -89,7 +88,7 @@ export default function VerifyEmail() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex1}>
+    <KeyboardAvoidingView behavior="padding" style={styles.flex1}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.xl }]}

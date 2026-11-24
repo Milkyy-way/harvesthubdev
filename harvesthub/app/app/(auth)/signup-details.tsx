@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView, ScrollView } from 'react-native';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -167,7 +167,7 @@ export default function SignupDetails() {
     // The status bar gets a solid strip of its own, so the form scrolls under
     // it instead of under the clock and battery icons.
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
       style={[styles.screen, { paddingTop: insets.top }]}
     >
       <ScrollView

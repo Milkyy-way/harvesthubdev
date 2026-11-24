@@ -69,6 +69,8 @@ export function OrderStoreSection({
 }: Props) {
   const [comment, setComment] = useState('');
   const [commentSent, setCommentSent] = useState(false);
+  const [editingComment, setEditingComment] = useState(false);
+  const savedComment = storeOrder.my_rating_comment || null;
   const isDelivery = storeOrder.fulfillment_method === 'delivery';
   // Paid, and Stripe is still confirming it: can't be stopped, so no Cancel yet.
   const processing = paymentStatus === 'processing' && storeOrder.status === 'pending_payment';
@@ -323,28 +325,58 @@ export function OrderStoreSection({
           )}
         </View>
       ) : null}
-      {storeOrder.status === 'completed' && storeOrder.my_rating && !commentSent ? (
+      {storeOrder.status === 'completed' && storeOrder.my_rating && savedComment && !editingComment ? (
+        // The comment they already sent (fix list 31), so a second one doesn't
+        // quietly replace it.
+        <View style={styles.problemCard}>
+          <Text style={styles.problemTitle}>Your comment</Text>
+          <Text style={styles.savedComment}>{savedComment}</Text>
+          <Pressable
+            onPress={() => {
+              setComment(savedComment);
+              setCommentSent(false);
+              setEditingComment(true);
+            }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Edit your comment"
+          >
+            <Text style={styles.commentEdit}>Edit</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {storeOrder.status === 'completed' && storeOrder.my_rating && (!savedComment || editingComment) && !commentSent ? (
         <View style={styles.commentRow}>
           <TextField
-            label="Add a comment (optional)"
+            label={editingComment ? 'Your comment' : 'Add a comment (optional)'}
             placeholder="What did you like, or what could be better?"
             value={comment}
             onChangeText={setComment}
             multiline
             maxLength={500}
           />
-          {comment.trim() ? (
-            <Pressable
-              style={styles.commentButton}
-              onPress={async () => {
-                // Only once it's saved: if it fails, the box stays with the text in it.
-                if (await onRate(storeOrder.my_rating!, comment.trim())) setCommentSent(true);
-              }}
-              disabled={ratingBusy}
-            >
-              <Text style={styles.commentButtonText}>Send comment</Text>
-            </Pressable>
-          ) : null}
+          <View style={styles.commentActions}>
+            {comment.trim() ? (
+              <Pressable
+                style={styles.commentButton}
+                onPress={async () => {
+                  // Only once it's saved: if it fails, the box stays with the text in it.
+                  if (await onRate(storeOrder.my_rating!, comment.trim())) {
+                    setCommentSent(true);
+                    setEditingComment(false);
+                  }
+                }}
+                disabled={ratingBusy}
+              >
+                <Text style={styles.commentButtonText}>{editingComment ? 'Save comment' : 'Send comment'}</Text>
+              </Pressable>
+            ) : null}
+            {editingComment ? (
+              <Pressable onPress={() => setEditingComment(false)} hitSlop={8} accessibilityRole="button">
+                <Text style={styles.commentButtonText}>Cancel</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       ) : null}
       {commentSent ? <Text style={styles.hint}>Thanks, your comment was sent to the farm.</Text> : null}
@@ -439,9 +471,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    marginTop: -spacing.sm,
   },
   commentButtonText: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  commentActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: -spacing.sm },
+  savedComment: { fontSize: 13.5, lineHeight: 20, color: colors.text, marginTop: 4 },
+  commentEdit: { fontSize: 13, fontWeight: '700', color: colors.primary, marginTop: spacing.xs },
   note: { fontSize: 12.5, lineHeight: 18, color: colors.danger, marginTop: spacing.sm },
   hint: { fontSize: 12.5, lineHeight: 18, color: colors.textMuted, marginTop: spacing.sm },
   actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },

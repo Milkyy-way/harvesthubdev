@@ -6,6 +6,8 @@ appId: com.harvesthubmarket.app
 - runFlow:
     file: subflows/login.yaml
 - tapOn: "Orders"
+# Since 2026-11-14 finished orders sit under Completed.
+- tapOn: "Completed"
 - extendedWaitUntil:
     visible: ${FARM}
     timeout: 30000
@@ -25,5 +27,10 @@ appId: com.harvesthubmarket.app
 - inputText: "Autotest: great peppers"
 - hideKeyboard
 - tapOn: "Send comment"
-- waitForAnimationToEnd
+# Fix list 24 and 31: a thank-you line, and the comment stays on the order.
+- extendedWaitUntil:
+    visible: "Thanks, your comment was sent to the farm\\."
+    timeout: 15000
+- assertVisible: "Your comment"
+- assertVisible: "Autotest: great peppers"
 - takeScreenshot: customer_pickup_rate_done

@@ -91,6 +91,7 @@ export interface StoreOrder {
   cancellation_reason: string | null;
   items: OrderLineItem[];
   my_rating: number | null;
+  my_rating_comment?: string | null; // the comment sent with the rating, if any
   delivery: DeliveryProgress | null; // delivery orders only
   // What the customer can do now (the server decides): cancel, and what
   // comes back — everything except the service fee — or why not.

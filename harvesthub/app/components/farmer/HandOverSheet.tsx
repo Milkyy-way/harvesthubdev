@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Modal, View, Text, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Modal, View, Text, Pressable, ActivityIndicator, KeyboardAvoidingView, StyleSheet, type TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius, fonts } from '../../constants/theme';
 import { TagSelector } from '../TagSelector';
@@ -33,6 +33,17 @@ export function HandOverSheet({ order, submitting, error, onClose, onConfirm }: 
   const [digits, setDigits] = useState('');
   const [choice, setChoice] = useState<string | null>(null);
   const [otherText, setOtherText] = useState('');
+  const codeInput = useRef<TextInput>(null);
+
+  // A wrong code (fix list 26): empty the box and keep it focused, so the
+  // farmer types the whole code again instead of editing around old digits.
+  // The orders screen clears the error before each try, so this runs every time.
+  useEffect(() => {
+    if (error && !backup) {
+      setCode('');
+      codeInput.current?.focus();
+    }
+  }, [error, backup]);
 
   const reason = choice === 'other' ? otherText.trim() : choice;
   const ready = backup ? digits.length === 4 && !!reason : code.length === 4;
@@ -53,7 +64,7 @@ export function HandOverSheet({ order, submitting, error, onClose, onConfirm }: 
 
   return (
     <Modal visible={!!order} transparent animationType="slide" onRequestClose={close}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
+      <KeyboardAvoidingView behavior="padding" style={styles.backdrop}>
         <Pressable style={styles.flex1} onPress={close} />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
           <Text style={styles.title}>Hand over the order</Text>
@@ -65,6 +76,7 @@ export function HandOverSheet({ order, submitting, error, onClose, onConfirm }: 
             <>
               <Text style={styles.body}>Ask {order?.customer_name ?? 'the customer'} for the 4-digit code in their app.</Text>
               <TextField
+                ref={codeInput}
                 label="Pickup code"
                 placeholder="1234"
                 value={code}
